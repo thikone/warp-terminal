@@ -27,7 +27,6 @@ use super::settings_page::{
     SettingsPageViewHandle, SettingsWidget,
 };
 use crate::appearance::Appearance;
-use crate::auth::AuthStateProvider;
 use crate::editor::{
     EditorView, Event as EditorEvent, PropagateAndNoOpNavigationKeys, SingleLineEditorOptions,
     TextOptions,
@@ -911,12 +910,10 @@ impl SettingsPageMeta for PlatformPageView {
         SettingsSection::OzCloudAPIKeys
     }
 
-    fn should_render(&self, ctx: &AppContext) -> bool {
-        let is_anonymous = AuthStateProvider::as_ref(ctx)
-            .get()
-            .is_anonymous_or_logged_out();
-
-        !is_anonymous && FeatureFlag::APIKeyManagement.is_enabled()
+    // Terminal-only build: the Cloud platform umbrella is never rendered.
+    // See `MainSettingsPageView::should_render`.
+    fn should_render(&self, _ctx: &AppContext) -> bool {
+        false
     }
 
     fn on_page_selected(&mut self, _allow_steal_focus: bool, ctx: &mut ViewContext<Self>) {

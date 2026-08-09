@@ -2657,9 +2657,10 @@ impl SettingsPageMeta for CodeSettingsPageView {
         self.page.update_filter(query, ctx)
     }
 
+    // Terminal-only build: the Code umbrella is never rendered.
+    // See `MainSettingsPageView::should_render`.
     fn should_render(&self, _ctx: &AppContext) -> bool {
-        FeatureFlag::FullSourceCodeEmbedding.is_enabled()
-            || FeatureFlag::OpenWarpNewSettingsModes.is_enabled()
+        false
     }
 
     fn on_page_selected(&mut self, _: bool, ctx: &mut ViewContext<Self>) {

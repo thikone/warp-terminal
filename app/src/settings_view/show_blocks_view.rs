@@ -26,7 +26,6 @@ use super::settings_page::{
     SettingsWidget, render_page_title,
 };
 use crate::appearance::Appearance;
-use crate::auth::AuthStateProvider;
 use crate::channel::{Channel, ChannelState};
 use crate::menu::{Event as MenuEvent, Event, Menu, MenuItem, MenuItemFields};
 use crate::server::block::Block;
@@ -608,12 +607,10 @@ impl SettingsPageMeta for ShowBlocksView {
         SettingsSection::SharedBlocks
     }
 
-    fn should_render(&self, ctx: &AppContext) -> bool {
-        let is_anonymous = AuthStateProvider::as_ref(ctx)
-            .get()
-            .is_anonymous_or_logged_out();
-
-        !is_anonymous
+    // Terminal-only build: shared blocks is a cloud sharing feature.
+    // See `MainSettingsPageView::should_render`.
+    fn should_render(&self, _ctx: &AppContext) -> bool {
+        false
     }
 
     fn on_page_selected(&mut self, _: bool, ctx: &mut ViewContext<Self>) {

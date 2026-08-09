@@ -404,8 +404,10 @@ impl SettingsPageMeta for ReferralsPageView {
         SettingsSection::Referrals
     }
 
+    // Terminal-only build: the Referrals page is never rendered.
+    // See `MainSettingsPageView::should_render`.
     fn should_render(&self, _ctx: &AppContext) -> bool {
-        true
+        false
     }
 
     fn on_page_selected(&mut self, _: bool, ctx: &mut ViewContext<Self>) {

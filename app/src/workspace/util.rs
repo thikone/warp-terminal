@@ -22,6 +22,8 @@ pub(super) struct WorkspaceMouseStates {
     pub(super) new_tab_button: MouseStateHandle,
     pub(super) new_tab_menu: MouseStateHandle,
     pub(super) new_tab: MouseStateHandle,
+    // Terminal-only build: only the tab-bar update pill read this.
+    #[allow(dead_code)]
     pub(super) overflow_button: MouseStateHandle,
     pub(super) banner_button: MouseStateHandle,
     pub(super) banner_secondary_button: MouseStateHandle,

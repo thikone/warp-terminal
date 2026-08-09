@@ -155,6 +155,8 @@ impl From<&MainPageAction> for LoginGatedFeature {
 
 #[derive(Clone, Copy)]
 pub enum MainSettingsPageEvent {
+    // Terminal-only build: auto-update is removed, so nothing emits this.
+    #[allow(dead_code)]
     CheckForUpdate,
     #[allow(dead_code)]
     OpenWarpDrive,
@@ -192,16 +194,11 @@ impl TypedActionView for MainSettingsPageView {
         }
 
         match action {
-            MainPageAction::Relaunch => {
-                autoupdate::initiate_relaunch_for_update(ctx);
-            }
-            MainPageAction::DownloadUpdate => {
-                autoupdate::manually_download_new_version(ctx);
-            }
-            MainPageAction::CheckForUpdate => {
-                ctx.emit(MainSettingsPageEvent::CheckForUpdate);
-                ctx.notify();
-            }
+            // Terminal-only build: auto-update is removed. The version widget no
+            // longer renders update controls, so these are unreachable no-ops.
+            MainPageAction::Relaunch
+            | MainPageAction::DownloadUpdate
+            | MainPageAction::CheckForUpdate => {}
             MainPageAction::ToggleSettingsSync => {
                 let new_value =
                     CloudPreferencesSettings::handle(ctx).update(ctx, |prefs_settings, ctx| {
@@ -1229,8 +1226,11 @@ impl SettingsPageMeta for MainSettingsPageView {
         SettingsSection::Account
     }
 
+    // Terminal-only build: the Account page is cloud/AI account management, so it
+    // is never rendered. Returning `false` removes it from both the sidebar and
+    // the content area via `SettingsView::filtered_pages`.
     fn should_render(&self, _ctx: &AppContext) -> bool {
-        true
+        false
     }
 
     fn on_page_selected(&mut self, _: bool, ctx: &mut ViewContext<Self>) {

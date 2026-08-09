@@ -1864,8 +1864,10 @@ impl SettingsPageMeta for TeamsPageView {
         }
     }
 
+    // Terminal-only build: the Teams page is cloud account management.
+    // See `MainSettingsPageView::should_render`.
     fn should_render(&self, _ctx: &AppContext) -> bool {
-        true
+        false
     }
 
     fn on_tab_pressed(&mut self, ctx: &mut ViewContext<Self>) {

@@ -311,6 +311,16 @@ impl TelemetryApi {
             return Ok(());
         }
 
+        // Terminal-only build: the OSS channel ships `telemetry_config: None`, so
+        // the RudderStack write key and root URL are empty and every request fails
+        // in the HTTP builder. Nothing ever left the machine, but the retry loop
+        // still ran and logged `builder error` roughly every 30 seconds. Bail out
+        // before that instead.
+        if !ChannelState::is_telemetry_available() {
+            log::debug!("Dropping telemetry batch: no telemetry config in this build");
+            return Ok(());
+        }
+
         if settings_snapshot.should_disable_telemetry() {
             log::info!("Not sending batched messages because telemetry is disabled.");
             return Ok(());

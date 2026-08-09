@@ -1,4 +1,4 @@
-﻿# Prevent history from being written to file, among other interactive features.
+# Prevent history from being written to file, among other interactive features.
 Remove-Module -Name PSReadline
 
 $global:_warpOriginalPrompt = $function:global:prompt
@@ -8,9 +8,21 @@ if ($PSEdition -eq 'Desktop' -or $IsWindows) {
     # MachinePolicy and UserPolicy scopes cannot be overridden. If either is Restricted, there's nothing we can do.
     if ((Get-ExecutionPolicy -Scope MachinePolicy) -eq $EP::Restricted -or (Get-ExecutionPolicy -Scope UserPolicy) -eq $EP::Restricted) {
         Write-Error 'ExecutionPolicy is Restricted. Unable to Warpify this PowerShell session.'
-    } elseif ((Get-ExecutionPolicy) -eq $EP::Restricted -and (Get-ExecutionPolicy -Scope MachinePolicy) -eq $EP::Undefined -and (Get-ExecutionPolicy -Scope UserPolicy) -eq $EP::Undefined) {
+    } else {
+        # Terminal-only build: this build's bootstrap script is not Authenticode
+        # signed (Warp's shipped one is), and if the source tree came from a
+        # downloaded archive the file also carries Mark-of-the-Web. Under either
+        # RemoteSigned or AllSigned that makes dot-sourcing it fail, and the
+        # terminal hangs forever on "Starting PowerShell Core...".
+        #
+        # Bypass applies to THIS pwsh process only - nothing is written to the
+        # machine or user policy, and Group Policy scopes still win if set.
         $global:_warp_PSProcessExecPolicy = $(Get-ExecutionPolicy -Scope Process)
-        Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned -Force
+        try {
+            Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+        } catch {
+            Write-Error "Unable to relax ExecutionPolicy for this session: $_"
+        }
     }
 }
 

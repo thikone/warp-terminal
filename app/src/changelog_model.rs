@@ -9,7 +9,6 @@ use warpui::assets::asset_cache::{AssetCache, AssetSource};
 use warpui::image_cache::ImageType;
 use warpui::{Entity, ModelContext, SingletonEntity};
 
-use crate::autoupdate::{self};
 use crate::channel::{Channel, ChannelState};
 use crate::features::{FeatureFlag, PREVIEW_FLAGS};
 use crate::server::server_api::ServerApi;
@@ -50,22 +49,18 @@ impl ChangelogModel {
             ChangelogState::Pending => {
                 // There is already a request pending, so no-op while we wait for the response
             }
-            ChangelogState::None => {
-                self.changelog = ChangelogState::Pending;
-                let server_api = self.server_api.clone();
-                let _ = ctx.spawn(
-                    async move {
-                        (
-                            request_type,
-                            autoupdate::get_current_changelog(server_api).await,
-                        )
-                    },
-                    Self::handle_changelog_check,
-                );
-            }
+            // Terminal-only build: the changelog was fetched from Warp's release
+            // server (`{releases_base_url}/changelog.json`). That network path is
+            // deleted along with the rest of auto-update, so there is nothing to
+            // fetch and the state stays `None`.
+            ChangelogState::None => {}
         }
     }
 
+    // Terminal-only build: the changelog is never fetched (the release-server
+    // network path was deleted with auto-update), so nothing reaches these.
+    // Kept intact so restoring a changelog source is a one-line change.
+    #[allow(dead_code)]
     fn handle_changelog_check(
         &mut self,
         (request_type, changelog): (
@@ -107,6 +102,7 @@ impl ChangelogModel {
         }
     }
 
+    #[allow(dead_code)]
     fn fetch_changelog_image(&mut self, ctx: &mut ModelContext<Self>) {
         let ChangelogState::Some(changelog) = &self.changelog else {
             return;
@@ -126,6 +122,7 @@ impl ChangelogModel {
     }
 
     /// Modifies the set of sections in the changelog, if necessary.
+    #[allow(dead_code)]
     fn maybe_add_changelog_sections(&mut self) {
         let markdown_sections = match &mut self.changelog {
             ChangelogState::Some(changelog) => &mut changelog.markdown_sections,
@@ -181,6 +178,7 @@ impl ChangelogModel {
         }
     }
 
+    #[allow(dead_code)]
     fn parse_changelog_markdown(&mut self) {
         if let ChangelogState::Some(changelog) = &self.changelog {
             for markdown_section in &changelog.markdown_sections {

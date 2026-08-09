@@ -124,8 +124,10 @@ impl SettingsPageMeta for WarpDriveSettingsPageView {
         SettingsSection::WarpDrive
     }
 
+    // Terminal-only build: the Warp Drive page is never rendered.
+    // See `MainSettingsPageView::should_render`.
     fn should_render(&self, _ctx: &AppContext) -> bool {
-        FeatureFlag::OpenWarpNewSettingsModes.is_enabled()
+        false
     }
 
     fn update_filter(&mut self, query: &str, ctx: &mut ViewContext<Self>) -> MatchData {

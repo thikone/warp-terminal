@@ -2024,8 +2024,10 @@ impl SettingsPageMeta for EnvironmentsPageView {
         });
     }
 
+    // Terminal-only build: the Cloud platform umbrella is never rendered.
+    // See `MainSettingsPageView::should_render`.
     fn should_render(&self, _ctx: &AppContext) -> bool {
-        true
+        false
     }
 
     fn update_filter(&mut self, query: &str, ctx: &mut ViewContext<Self>) -> MatchData {

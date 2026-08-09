@@ -29,7 +29,6 @@ use warpui::{AppContext, Entity, ModelContext, SingletonEntity, UpdateModel};
 
 use crate::ai::execution_profiles::ExecutionProfilesConfig;
 use crate::ai::request_usage_model::RequestLimitInfo;
-use crate::auth::AuthStateProvider;
 use crate::settings::PrivacySettings;
 use crate::terminal::CLIAgent;
 use crate::workspaces::user_workspaces::UserWorkspaces;
@@ -1156,9 +1155,12 @@ impl settings_value::SettingsValue for ToolbarCommandMap {
 
 define_settings_group!(AISettings, settings: [
     // If `false`, all AI features are disabled.
+    // Terminal-only build: defaults to `false` so the handful of call sites that
+    // read this field directly (rather than going through the
+    // `is_any_ai_enabled()` getter) also see AI as off.
     is_any_ai_enabled: IsAnyAIEnabled {
         type: bool,
-        default: true,
+        default: false,
         supported_platforms: SupportedPlatforms::ALL,
         sync_to_cloud: SyncToCloud::Globally(RespectUserSyncSetting::No),
         surface: settings::SettingSurfaces::GUI,
@@ -2179,15 +2181,17 @@ impl AISettings {
         contains_remote_blocks || contains_restored_remote_blocks
     }
 
-    pub fn is_any_ai_enabled(&self, app: &AppContext) -> bool {
-        // Disable AI for anonymous and logged-out users.
-        let is_anonymous_or_logged_out = AuthStateProvider::as_ref(app)
-            .get()
-            .is_anonymous_or_logged_out();
-
-        *self.is_any_ai_enabled
-            && !is_anonymous_or_logged_out
-            && !self.is_ai_disabled_due_to_remote_session_org_policy(app)
+    /// Terminal-only build: AI is permanently disabled.
+    ///
+    /// This is the single gate consulted by ~200 UI sites (agent panes, the
+    /// agent/cloud-agent entries in the new-session menu, Oz affordances,
+    /// warm-welcome popovers) and it is projected into the keybinding context
+    /// system as `flags::IS_ANY_AI_ENABLED`, so every AI command-palette entry
+    /// and keybinding predicated on that flag disappears with it. Returning a
+    /// constant `false` here removes all of them at once, regardless of what
+    /// `agents.warp_agent.is_any_ai_enabled` says in `settings.toml`.
+    pub fn is_any_ai_enabled(&self, _app: &AppContext) -> bool {
+        false
     }
 
     /// Returns whether conversation history is available for the current

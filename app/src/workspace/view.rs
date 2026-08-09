@@ -48,7 +48,6 @@ use ai::index::full_source_code_embedding::manager::CodebaseIndexManager;
 use anyhow::Context as _;
 #[cfg(target_os = "macos")]
 use anyhow::Result;
-use autoupdate::AutoupdateStage;
 #[cfg(target_os = "macos")]
 use command::blocking::Command;
 use futures::Future;
@@ -238,9 +237,7 @@ use crate::auth::auth_override_warning_modal::{
 };
 use crate::auth::auth_state::AuthState;
 use crate::auth::auth_view_modal::{AuthRedirectPayload, AuthView, AuthViewEvent, AuthViewVariant};
-use crate::autoupdate::{
-    AutoupdateState, AutoupdateStateEvent, RelaunchModel, is_incoming_version_past_current,
-};
+use crate::autoupdate::{AutoupdateState, AutoupdateStateEvent, RelaunchModel};
 use crate::banner::BannerState;
 use crate::billing::shared_objects_creation_denied_modal::{
     SharedObjectsCreationDeniedModal, SharedObjectsCreationDeniedModalEvent,
@@ -437,9 +434,8 @@ use crate::themes::theme_chooser::{ThemeChooser, ThemeChooserEvent, ThemeChooser
 use crate::themes::theme_creator_modal::{ThemeCreatorModal, ThemeCreatorModalEvent};
 use crate::themes::theme_deletion_modal::{ThemeDeletionModal, ThemeDeletionModalEvent};
 use crate::tips::{TipsEvent, TipsView};
-use crate::ui_components::avatar::{Avatar, AvatarContent, StatusElementTypes};
+use crate::ui_components::avatar::{Avatar, AvatarContent};
 use crate::ui_components::buttons::{combo_inner_button, icon_button_with_color};
-use crate::ui_components::red_notification_dot::RedNotificationDot;
 use crate::ui_components::window_focus_dimming::WindowFocusDimming;
 use crate::ui_components::{blended_colors, icons};
 use crate::undo_close::UndoCloseStack;
@@ -540,7 +536,7 @@ use crate::workspaces::user_workspaces::UserWorkspaces;
 use crate::workspaces::workspace::AdminEnablementSetting;
 use crate::{
     AgentNotificationsModel, BlocklistAIHistoryModel, GlobalResourceHandles, TelemetryEvent,
-    autoupdate, send_telemetry_from_ctx, settings,
+    send_telemetry_from_ctx, settings,
 };
 
 /// The padding that should be applied to the workspace as a whole.
@@ -571,12 +567,6 @@ pub const TOTAL_TAB_BAR_HEIGHT: f32 = TAB_BAR_HEIGHT + TAB_BAR_BORDER_HEIGHT;
 
 const TAB_BAR_ICON_PADDING: f32 = 4.;
 
-const TAB_BAR_PILL_WIDTH: f32 = 100.;
-const PILL_FONT_SIZE: f32 = 12.;
-// We use the word "Warp" in the Update Ready button to make it obvious that the terminal is Warp.
-// This can lead to free advertising when users screen-share Warp when an update is available.
-const UPDATE_READY_TEXT: &str = "Update Warp";
-
 const TAB_BAR_OVERFLOW_MENU_WIDTH: f32 = 300.;
 
 #[cfg(not(target_family = "wasm"))]
@@ -603,10 +593,6 @@ const WELCOME_TIPS_POSITION_ID: &str = "welcome_tips_pill";
 const ELLIPSE_SVG_PATH: &str = "bundled/svg/ellipse.svg";
 
 const AI_ASSISTANT_BUTTON_ID: &str = "workspace_view:ai_assistant_button";
-
-const VERSION_DEPRECATION_BANNER_TEXT: &str = "Your app is out of date and some features may not work as expected. Please update immediately.";
-
-const VERSION_DEPRECATION_WITHOUT_PERMISSIONS_BANNER_TEXT: &str = "Some Warp features may not work as expected without updating immediately, but Warp is unable to perform the update.";
 
 const ASK_AI_ASSISTANT_KEYBINDING_NAME: &str = "workspace:toggle_ai_assistant";
 const TOGGLE_RESOURCE_CENTER_KEYBINDING_NAME: &str = "workspace:toggle_resource_center";
@@ -8005,39 +7991,10 @@ impl Workspace {
             return;
         }
 
-        let mut menu_items = vec![];
-        if FeatureFlag::Autoupdate.is_enabled()
-            && ChannelState::show_autoupdate_menu_items()
-            && let Some(version) = ChannelState::app_version()
-        {
-            menu_items.push(
-                MenuItemFields::new(format!("Current version is {version}"))
-                    .with_disabled(true)
-                    .into_item(),
-            );
-            match autoupdate::get_update_state(ctx) {
-                AutoupdateStage::UpdateReady { new_version, .. }
-                | AutoupdateStage::UpdatedPendingRestart { new_version } => menu_items.push(
-                    MenuItemFields::new(format!("Install update ({})", new_version.version))
-                        .with_on_select_action(WorkspaceAction::ApplyUpdate)
-                        .into_item(),
-                ),
-                AutoupdateStage::Updating { new_version, .. } => menu_items.push(
-                    MenuItemFields::new(format!("Updating to ({})", new_version.version))
-                        .with_disabled(true)
-                        .into_item(),
-                ),
-                AutoupdateStage::UnableToUpdateToNewVersion { .. } => menu_items.push(
-                    MenuItemFields::new("Update Warp manually")
-                        .with_on_select_action(WorkspaceAction::DownloadNewVersion)
-                        .into_item(),
-                ),
-                AutoupdateStage::NoUpdateAvailable
-                | AutoupdateStage::CheckingForUpdate
-                | AutoupdateStage::DownloadingUpdate
-                | AutoupdateStage::UnableToLaunchNewVersion { .. } => {}
-            }
-        }
+        // Terminal-only build: this menu existed solely to host the auto-update
+        // entries ("Current version is …", "Install update", "Update Warp
+        // manually"), so it is now always empty.
+        let menu_items = vec![];
 
         ctx.update_view(&self.tab_bar_overflow_menu, |context_menu, view_ctx| {
             context_menu.set_items(menu_items, view_ctx);
@@ -9769,65 +9726,19 @@ impl Workspace {
         ctx.notify();
     }
 
-    fn user_menu_items(&self, app: &AppContext) -> Vec<MenuItem<WorkspaceAction>> {
-        let mut items = Vec::new();
-        if !self.auth_state.is_anonymous_or_logged_out() {
-            let name = self.auth_state.username_for_display().unwrap_or_default();
-            items.push(MenuItemFields::new(name).with_disabled(true).into_item())
-        }
-
-        let appearance = Appearance::as_ref(app);
-
-        // Render the subtle autoupdate UI if autoupdate is ready and there is no incoming prominent update version.
-        if FeatureFlag::Autoupdate.is_enabled()
-            && FeatureFlag::AutoupdateUIRevamp.is_enabled()
-            && ChannelState::show_autoupdate_menu_items()
-        {
-            match autoupdate::get_update_state(app) {
-                AutoupdateStage::UpdateReady { new_version, .. }
-                | AutoupdateStage::UpdatedPendingRestart { new_version }
-                    if !is_incoming_version_past_current(
-                        new_version.last_prominent_update.as_deref(),
-                    ) =>
-                {
-                    items.push(
-                        MenuItemFields::new("Update and relaunch Warp")
-                            .with_on_select_action(WorkspaceAction::ApplyUpdate)
-                            .with_override_text_color(appearance.theme().ansi_fg_red())
-                            .into_item(),
-                    )
-                }
-                AutoupdateStage::Updating { new_version, .. }
-                    if !is_incoming_version_past_current(
-                        new_version.last_prominent_update.as_deref(),
-                    ) =>
-                {
-                    items.push(
-                        MenuItemFields::new(format!("Updating to ({})", new_version.version))
-                            .with_disabled(true)
-                            .into_item(),
-                    )
-                }
-                AutoupdateStage::UnableToUpdateToNewVersion { new_version }
-                    if !is_incoming_version_past_current(
-                        new_version.last_prominent_update.as_deref(),
-                    ) =>
-                {
-                    items.push(
-                        MenuItemFields::new("Update Warp manually")
-                            .with_on_select_action(WorkspaceAction::DownloadNewVersion)
-                            .with_override_text_color(appearance.theme().ansi_fg_red())
-                            .into_item(),
-                    )
-                }
-                _ => {}
-            }
-        }
-
-        items.extend([
-            MenuItemFields::new("What's new")
-                .with_on_select_action(WorkspaceAction::ViewLatestChangelog)
-                .into_item(),
+    /// Items for the avatar drop-down in the tab bar.
+    ///
+    /// Terminal-only build: trimmed to the entries that still do something.
+    /// Removed along with the rest of the account/AI surfaces:
+    ///
+    /// * the auto-update entries, and "What's new" (the changelog is never
+    ///   fetched, so it could only ever render empty)
+    /// * "Feedback" and "Join our Slack community" (Warp community surfaces)
+    /// * "Sign up", "Upgrade" / "Billing and usage", "Invite a friend" and
+    ///   "Log out" -- account and AI-billing surfaces whose settings pages are
+    ///   themselves removed
+    fn user_menu_items(&self, _app: &AppContext) -> Vec<MenuItem<WorkspaceAction>> {
+        let mut items = vec![
             MenuItemFields::new("Settings")
                 .with_on_select_action(WorkspaceAction::ShowSettings)
                 .into_item(),
@@ -9838,10 +9749,7 @@ impl Workspace {
             MenuItemFields::new("Documentation")
                 .with_on_select_action(WorkspaceAction::ViewUserDocs)
                 .into_item(),
-            MenuItemFields::new("Feedback")
-                .with_on_select_action(WorkspaceAction::SendFeedback)
-                .into_item(),
-        ]);
+        ];
 
         #[cfg(not(target_family = "wasm"))]
         items.push(
@@ -9850,56 +9758,6 @@ impl Workspace {
                 .into_item(),
         );
 
-        items.extend([
-            MenuItemFields::new("Join our Slack community")
-                .with_on_select_action(WorkspaceAction::JoinSlack)
-                .into_item(),
-            MenuItem::Separator,
-        ]);
-
-        if self.auth_state.is_anonymous_or_logged_out() {
-            items.push(
-                MenuItemFields::new("Sign up")
-                    .with_on_select_action(WorkspaceAction::SignupAnonymousUser)
-                    .into_item(),
-            );
-        }
-
-        // Check if the user is on any paid plan to determine whether to show "Billing and Usage" or "Upgrade"
-        let is_on_paid_plan = UserWorkspaces::as_ref(app)
-            .current_workspace()
-            .map(|workspace| workspace.billing_metadata.is_user_on_paid_plan())
-            .unwrap_or(false);
-
-        if is_on_paid_plan {
-            items.push(
-                MenuItemFields::new("Billing and usage")
-                    .with_on_select_action(WorkspaceAction::ShowSettingsPage(
-                        SettingsSection::BillingAndUsage,
-                    ))
-                    .into_item(),
-            );
-        } else {
-            items.push(
-                MenuItemFields::new("Upgrade")
-                    .with_on_select_action(WorkspaceAction::ShowUpgrade)
-                    .into_item(),
-            );
-        }
-
-        items.push(
-            MenuItemFields::new("Invite a friend")
-                .with_on_select_action(WorkspaceAction::ShowReferralSettingsPage)
-                .into_item(),
-        );
-
-        if !self.auth_state.is_anonymous_or_logged_out() {
-            items.push(
-                MenuItemFields::new("Log out")
-                    .with_on_select_action(WorkspaceAction::LogOut)
-                    .into_item(),
-            );
-        }
         items
     }
 
@@ -18468,15 +18326,15 @@ impl Workspace {
         ctx.notify();
     }
 
+    // Terminal-only build: auto-update is removed, so applying or downloading an
+    // update does nothing beyond dismissing the menu. The actions that reached
+    // these are gone from the UI; the handlers remain so the action dispatch
+    // match stays exhaustive.
     fn apply_update(&mut self, ctx: &mut ViewContext<Self>) {
-        if let Ok(autoupdate::ReadyForRelaunch::Yes) = autoupdate::apply_update(self, ctx) {
-            autoupdate::initiate_relaunch_for_update(ctx);
-        }
         self.close_tab_bar_overflow_menu(ctx);
     }
 
     fn download_new_version(&mut self, ctx: &mut ViewContext<Self>) {
-        autoupdate::manually_download_new_version(ctx);
         self.close_tab_bar_overflow_menu(ctx);
     }
 
@@ -21563,7 +21421,7 @@ impl Workspace {
         .finish()
     }
 
-    fn render_avatar_button(&self, appearance: &Appearance, ctx: &AppContext) -> Box<dyn Element> {
+    fn render_avatar_button(&self, appearance: &Appearance, _ctx: &AppContext) -> Box<dyn Element> {
         let is_anonymous = self.auth_state.is_anonymous_or_logged_out();
         let display_name = self
             .auth_state
@@ -21582,7 +21440,7 @@ impl Workspace {
                 .unwrap_or(AvatarContent::DisplayName(display_name.clone()))
         };
 
-        let mut avatar = Avatar::new(
+        let avatar = Avatar::new(
             avatar_content,
             UiComponentStyles {
                 width: Some(20.),
@@ -21597,22 +21455,7 @@ impl Workspace {
             },
         );
 
-        // Render the subtle autoupdate UI if autoupdate is ready and there is no incoming prominent update version.
-        let autoupdate_stage = autoupdate::get_update_state(ctx);
-        if FeatureFlag::AutoupdateUIRevamp.is_enabled()
-            && autoupdate_stage.ready_for_update()
-            && autoupdate_stage
-                .available_new_version()
-                .map(|version| {
-                    !is_incoming_version_past_current(version.last_prominent_update.as_deref())
-                })
-                .unwrap_or(false)
-        {
-            avatar = avatar.with_status_element(
-                StatusElementTypes::Circle,
-                RedNotificationDot::default_styles(appearance),
-            );
-        }
+        // Terminal-only build: the avatar's update notification dot is removed.
 
         let button = Hoverable::new(self.mouse_states.avatar_icon.clone(), |state| {
             let mut stack = Stack::new();
@@ -21953,69 +21796,11 @@ impl Workspace {
 
     fn render_tab_overflow_menu(
         &self,
-        app: &AppContext,
-        appearance: &Appearance,
+        _app: &AppContext,
+        _appearance: &Appearance,
     ) -> Option<Box<dyn Element>> {
-        if !ContextFlag::PromptForVersionUpdates.is_enabled() {
-            return None;
-        }
-
-        let autoupdate_stage = autoupdate::get_update_state(app);
-        // Render the prominent autoupdate pill if autoupdate is ready and the current version is behind a prominent update version.
-        if autoupdate_stage.ready_for_update()
-            && (!FeatureFlag::AutoupdateUIRevamp.is_enabled()
-                || autoupdate_stage
-                    .available_new_version()
-                    .map(|version| {
-                        is_incoming_version_past_current(version.last_prominent_update.as_deref())
-                    })
-                    .unwrap_or(false))
-        {
-            let pill = ConstrainedBox::new(
-                Container::new(
-                    Flex::row()
-                        .with_child(
-                            Text::new_inline(
-                                UPDATE_READY_TEXT,
-                                appearance.ui_font_family(),
-                                PILL_FONT_SIZE,
-                            )
-                            .with_color(Fill::warn().into())
-                            .finish(),
-                        )
-                        .with_main_axis_size(MainAxisSize::Max)
-                        .with_main_axis_alignment(MainAxisAlignment::Center)
-                        .finish(),
-                )
-                .with_border(Border::all(1.).with_border_color(Fill::warn().into()))
-                .with_corner_radius(CornerRadius::with_all(Radius::Percentage(50.)))
-                .with_uniform_margin(4.)
-                .with_uniform_padding(4.)
-                .with_margin_right(5.)
-                .finish(),
-            )
-            .with_width(TAB_BAR_PILL_WIDTH)
-            .finish();
-
-            let button = if self.show_tab_bar_overflow_menu {
-                pill
-            } else {
-                // Only attach the event handler in the case where the menu isn't already showing
-                // Otherwise we have a race condition in the case that someone clicks on the button
-                // where the menu tries to dismiss itself onclick and the menu gets reshown on mouseup
-                Hoverable::new(self.mouse_states.overflow_button.clone(), |_state| pill)
-                    .on_click(move |ctx, _, _| {
-                        ctx.dispatch_typed_action(WorkspaceAction::ToggleTabBarOverflowMenu);
-                    })
-                    .with_reset_cursor_after_click()
-                    .with_cursor(Cursor::PointingHand)
-                    .finish()
-            };
-
-            Some(Align::new(SavePosition::new(button, "tab_bar_overflow_button").finish()).finish())
-        } else {
-            None
-        }
+        // Terminal-only build: the tab-bar update pill is removed.
+        None
     }
 
     fn render_banner_and_active_tab(
@@ -22223,111 +22008,13 @@ impl Workspace {
         })
     }
 
-    fn render_autoupdate_banner_element(&self, app: &AppContext) -> Option<WorkspaceBannerFields> {
-        if FeatureFlag::Autoupdate.is_enabled() {
-            match autoupdate::get_update_state(app) {
-                AutoupdateStage::UnableToUpdateToNewVersion { new_version }
-                    if !self.autoupdate_unable_to_update_banner_dismissed =>
-                {
-                    let description =
-                        if is_incoming_version_past_current(new_version.soft_cutoff.as_deref()) {
-                            VERSION_DEPRECATION_WITHOUT_PERMISSIONS_BANNER_TEXT.to_owned()
-                        } else {
-                            "A new version is available but Warp is unable to perform the update."
-                                .to_owned()
-                        };
-
-                    Some(WorkspaceBannerFields {
-                        banner_type: WorkspaceBanner::UnableToUpdateToNewVersion,
-                        severity: BannerSeverity::Error,
-                        heading: None,
-                        description,
-                        secondary_button: None,
-                        button: Some(WorkspaceBannerButtonDetails {
-                            text: "Update Warp manually".to_string(),
-                            action: WorkspaceAction::DownloadNewVersion,
-                            variant: BannerButtonVariant::Outlined,
-                            icon: None,
-                            more_info_button_action: Some(WorkspaceAction::AutoupdateFailureLink),
-                        }),
-                    })
-                }
-                AutoupdateStage::UnableToLaunchNewVersion { new_version }
-                    if !self.autoupdate_unable_to_launch_new_version =>
-                {
-                    let description =
-                        if is_incoming_version_past_current(new_version.soft_cutoff.as_deref()) {
-                            VERSION_DEPRECATION_WITHOUT_PERMISSIONS_BANNER_TEXT.to_owned()
-                        } else {
-                            "Warp was unable to launch the new installed version.".to_owned()
-                        };
-
-                    Some(WorkspaceBannerFields {
-                        banner_type: WorkspaceBanner::UnableToLaunchNewVersion,
-                        severity: BannerSeverity::Error,
-                        heading: None,
-                        description,
-                        secondary_button: None,
-                        button: Some(WorkspaceBannerButtonDetails {
-                            text: "Update Warp manually".to_string(),
-                            action: WorkspaceAction::DownloadNewVersion,
-                            variant: BannerButtonVariant::Outlined,
-                            icon: None,
-                            more_info_button_action: Some(WorkspaceAction::AutoupdateFailureLink),
-                        }),
-                    })
-                }
-                AutoupdateStage::UpdateReady { new_version, .. }
-                | AutoupdateStage::UpdatedPendingRestart { new_version } => {
-                    if is_incoming_version_past_current(new_version.soft_cutoff.as_deref()) {
-                        Some(WorkspaceBannerFields {
-                            banner_type: WorkspaceBanner::VersionDeprecated,
-                            severity: BannerSeverity::Error,
-                            heading: None,
-                            description: VERSION_DEPRECATION_BANNER_TEXT.to_string(),
-                            secondary_button: None,
-                            button: Some(WorkspaceBannerButtonDetails {
-                                text: "Update now".to_string(),
-                                action: WorkspaceAction::ApplyUpdate,
-                                variant: BannerButtonVariant::Outlined,
-                                icon: None,
-                                more_info_button_action: None,
-                            }),
-                        })
-                    } else if let Some(update_by) = new_version.update_by {
-                        self.server_time.as_ref().and_then(|server_time| {
-                            (server_time.current_time() > update_by).then(|| {
-                                WorkspaceBannerFields {
-                                    banner_type: WorkspaceBanner::VersionDeprecated,
-                                    severity: BannerSeverity::Warning,
-                                    heading: None,
-                                    description: "Your app is out of date and needs to update."
-                                        .to_string(),
-                                    secondary_button: None,
-                                    button: Some(WorkspaceBannerButtonDetails {
-                                        text: "Restart app and update now".to_string(),
-                                        action: WorkspaceAction::ApplyUpdate,
-                                        variant: BannerButtonVariant::Outlined,
-                                        icon: None,
-                                        more_info_button_action: None,
-                                    }),
-                                }
-                            })
-                        })
-                    } else {
-                        None
-                    }
-                }
-                AutoupdateStage::NoUpdateAvailable
-                | AutoupdateStage::CheckingForUpdate
-                | AutoupdateStage::DownloadingUpdate
-                | AutoupdateStage::Updating { .. }
-                | AutoupdateStage::UnableToUpdateToNewVersion { .. }
-                | AutoupdateStage::UnableToLaunchNewVersion { .. } => None,
-            }
-        } else {
-            None
-        }
+    // Terminal-only build: auto-update is removed, so there is never an
+    // update-related banner. This previously rendered the non-dismissible
+    // "Your app is out of date and some features may not work as expected."
+    // nag (WorkspaceBanner::VersionDeprecated) plus the two "unable to
+    // update" banners, all driven by the server's `soft_cutoff`.
+    fn render_autoupdate_banner_element(&self, _app: &AppContext) -> Option<WorkspaceBannerFields> {
+        None
     }
 
     fn render_workspace_banner(
@@ -26350,13 +26037,6 @@ impl View for Workspace {
             .any(|id| id.is_code_pane())
         {
             context.set.insert("Workspace_TextOpen");
-        }
-
-        if matches!(
-            autoupdate::get_update_state(app),
-            AutoupdateStage::UpdateReady { .. } | AutoupdateStage::UpdatedPendingRestart { .. }
-        ) {
-            context.set.insert("AutoupdateState_UpdateReady");
         }
 
         if matches!(

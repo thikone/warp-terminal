@@ -4695,8 +4695,10 @@ impl SettingsPageMeta for AISettingsPageView {
         SettingsSection::AI
     }
 
+    // Terminal-only build: the Agents umbrella and its backing AI page are never
+    // rendered. See `MainSettingsPageView::should_render`.
     fn should_render(&self, _ctx: &AppContext) -> bool {
-        FeatureFlag::AgentMode.is_enabled()
+        false
     }
 
     fn on_page_selected(&mut self, _: bool, ctx: &mut ViewContext<Self>) {

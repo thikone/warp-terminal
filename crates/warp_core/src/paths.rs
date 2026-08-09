@@ -15,12 +15,46 @@
 //! returning a relative path.
 
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use cfg_if::cfg_if;
 use directories::BaseDirs;
 
 use crate::AppId;
 use crate::channel::{Channel, ChannelState};
+
+/// Directory name that, when present next to the executable, switches the app
+/// into **portable mode**: every piece of user state is stored beside the binary
+/// instead of in the OS user profile.
+///
+/// This mirrors the convention VS Code uses. It is opt-in and reversible --
+/// remove the directory and the app goes straight back to the normal
+/// per-user locations, with the profile it left behind untouched.
+const PORTABLE_DATA_DIR_NAME: &str = "data";
+
+/// Returns the portable-mode root, if this install is portable.
+///
+/// Resolved once per process from the executable's own location, so it is
+/// unaffected by the working directory the app happens to be launched from.
+///
+/// Layout under the returned root:
+///
+/// | Path       | Holds                                                     |
+/// |------------|-----------------------------------------------------------|
+/// | `config/`  | `settings.toml`, `keybindings.yaml`, `user_preferences.json`, `cli/` |
+/// | `state/`   | `warp.sqlite`, `logs/`, telemetry queue, index snapshots   |
+/// | `cache/`   | disposable cached data (avatars, etc.)                    |
+/// | `.warp/`   | workflows, skills, `.mcp.json`                            |
+pub fn portable_root() -> Option<&'static Path> {
+    static PORTABLE_ROOT: OnceLock<Option<PathBuf>> = OnceLock::new();
+    PORTABLE_ROOT
+        .get_or_init(|| {
+            let exe = std::env::current_exe().ok()?;
+            let candidate = exe.parent()?.join(PORTABLE_DATA_DIR_NAME);
+            candidate.is_dir().then_some(candidate)
+        })
+        .as_deref()
+}
 
 /// The name of the directory in which to put non-global Warp-specific files.
 ///
@@ -64,6 +98,11 @@ pub fn warp_home_config_dir_name() -> String {
 /// Warp-authored, user-facing config under a `.warp*` directory in the home directory instead of
 /// using the platform XDG/AppData project directories.
 pub fn warp_home_config_dir() -> Option<PathBuf> {
+    // Portable mode keeps workflows, skills and MCP config with the binary
+    // rather than in `~/.warp-oss`.
+    if let Some(root) = portable_root() {
+        return Some(root.join(WARP_CONFIG_DIR));
+    }
     dirs::home_dir().map(|home_dir| home_dir.join(warp_home_config_dir_name()))
 }
 
@@ -117,6 +156,11 @@ fn macos_config_dir_name_for(channel: Channel, data_profile: Option<&str>) -> St
 ///
 /// This is the appropriate home for things like custom themes and workflows.
 pub fn data_dir() -> PathBuf {
+    // Portable mode collapses the roaming/local split -- there is no roaming
+    // profile to sync with -- so data and state share one directory.
+    if let Some(root) = portable_root() {
+        return root.join("state");
+    }
     cfg_if! {
         if #[cfg(target_os = "macos")] {
             // TODO(vorporeal): We should do something better than return a
@@ -153,6 +197,9 @@ fn gui_app_id() -> AppId {
 /// Returns the path to the directory where non-portable configuration files
 /// should be stored.
 pub fn config_local_dir() -> PathBuf {
+    if let Some(root) = portable_root() {
+        return root.join("config");
+    }
     cfg_if! {
         if #[cfg(target_os = "macos")] {
             // TODO(vorporeal): We should do something better than return a
@@ -174,6 +221,11 @@ pub fn config_local_dir() -> PathBuf {
 /// GUI `.warp*` directory, so this fails closed instead of selecting a source
 /// profile implicitly.
 pub fn gui_config_local_dir() -> Option<PathBuf> {
+    // In portable mode both front-ends live under the same root, so the GUI's
+    // config directory is simply the portable one.
+    if let Some(root) = portable_root() {
+        return Some(root.join("config"));
+    }
     cfg_if! {
         if #[cfg(target_os = "macos")] {
             if ChannelState::data_profile().is_some() {
@@ -258,6 +310,9 @@ pub fn base_config_dir() -> PathBuf {
 /// contains durable but non-critical and non-portable data like what windows
 /// the user had open and cached state of known Warp Drive objects.
 pub fn state_dir() -> PathBuf {
+    if let Some(root) = portable_root() {
+        return root.join("state");
+    }
     let Some(project_dirs) = project_dirs() else {
         return PathBuf::new();
     };
@@ -319,6 +374,9 @@ pub fn themes_dir() -> PathBuf {
 /// we don't want to fetch on every launch of the app but can be safely
 /// deleted by the OS.
 pub fn cache_dir() -> PathBuf {
+    if let Some(root) = portable_root() {
+        return root.join("cache");
+    }
     let Some(project_dirs) = project_dirs() else {
         return PathBuf::new();
     };

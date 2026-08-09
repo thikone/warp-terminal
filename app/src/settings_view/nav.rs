@@ -26,6 +26,10 @@ pub struct SettingsUmbrella {
 }
 
 impl SettingsUmbrella {
+    // Terminal-only build: every umbrella group (Agents, Code, Cloud platform)
+    // was removed from the sidebar, so nothing constructs one anymore. Kept so
+    // the sidebar render loop and keyboard-nav code stay intact.
+    #[allow(dead_code)]
     pub fn new(label: &'static str, subpages: Vec<SettingsSection>) -> Self {
         let subpage_count = subpages.len();
         Self {
@@ -130,5 +134,7 @@ pub enum SettingsNavItem {
     /// A top-level page that is rendered directly in the sidebar.
     Page(SettingsSection),
     /// A collapsible group header whose children are subpage sections.
+    /// Terminal-only build: no umbrella groups remain, so this is never built.
+    #[allow(dead_code)]
     Umbrella(SettingsUmbrella),
 }

@@ -14,7 +14,7 @@ use itertools::Itertools as _;
 use keybindings::KeybindingsView;
 use main_page::{MainPageAction, MainSettingsPageEvent, MainSettingsPageView};
 use mcp_servers_page::MCPServersSettingsPageView;
-use nav::{SettingsNavItem, SettingsUmbrella};
+use nav::SettingsNavItem;
 use pathfinder_geometry::vector::Vector2F;
 use privacy_page::{PrivacyPageView, PrivacyPageViewEvent};
 use referrals_page::{ReferralsPageEvent, ReferralsPageView};
@@ -273,10 +273,12 @@ pub enum SettingsViewEvent {
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub enum SettingsSection {
     About,
-    #[default]
+    // Terminal-only build: `Account` is no longer rendered, so `Appearance` is
+    // the default landing section.
     Account,
     MCPServers,
     BillingAndUsage,
+    #[default]
     Appearance,
     Features,
     Keybindings,
@@ -1361,48 +1363,28 @@ impl SettingsView {
 
         // Build sidebar nav items. AI page is presented as an "Agents" umbrella
         // with subpages; the actual AI SettingsPage is hidden from direct sidebar listing.
+        // Terminal-only build: the Account page and the Agents / Code / Cloud
+        // platform umbrellas, plus Referrals and Warp Drive, are omitted. Their
+        // backing pages also return `false` from `should_render`, so deeplinks
+        // and search cannot reach them either.
         let mut nav_items = vec![
-            SettingsNavItem::Page(SettingsSection::Account),
-            SettingsNavItem::Umbrella(SettingsUmbrella::new(
-                "Agents",
-                SettingsSection::ai_subpages().to_vec(),
-            )),
-            SettingsNavItem::Page(SettingsSection::BillingAndUsage),
-            SettingsNavItem::Umbrella(SettingsUmbrella::new(
-                "Code",
-                vec![
-                    SettingsSection::CodeIndexing,
-                    SettingsSection::EditorAndCodeReview,
-                ],
-            )),
-            SettingsNavItem::Umbrella(SettingsUmbrella::new(
-                "Cloud platform",
-                vec![
-                    SettingsSection::CloudEnvironments,
-                    SettingsSection::OzCloudAPIKeys,
-                ],
-            )),
-            SettingsNavItem::Page(SettingsSection::Teams),
             SettingsNavItem::Page(SettingsSection::Appearance),
             SettingsNavItem::Page(SettingsSection::Features),
             SettingsNavItem::Page(SettingsSection::Keybindings),
             SettingsNavItem::Page(SettingsSection::Warpify),
-            SettingsNavItem::Page(SettingsSection::Referrals),
-            SettingsNavItem::Page(SettingsSection::SharedBlocks),
-            SettingsNavItem::Page(SettingsSection::WarpDrive),
             SettingsNavItem::Page(SettingsSection::Privacy),
             SettingsNavItem::Page(SettingsSection::About),
         ];
 
         if FeatureFlag::WarpControlCli.is_enabled() {
-            let shared_blocks_index = nav_items
+            // Scripting used to sit just above Shared blocks, which is gone in
+            // this build; anchor on Privacy so it keeps its relative position.
+            let privacy_index = nav_items
                 .iter()
-                .position(|item| {
-                    matches!(item, SettingsNavItem::Page(SettingsSection::SharedBlocks))
-                })
+                .position(|item| matches!(item, SettingsNavItem::Page(SettingsSection::Privacy)))
                 .unwrap_or(nav_items.len());
             nav_items.insert(
-                shared_blocks_index,
+                privacy_index,
                 SettingsNavItem::Page(SettingsSection::Scripting),
             );
         }
@@ -1412,7 +1394,7 @@ impl SettingsView {
             Some(SettingsSection::AI) => SettingsSection::WarpAgent,
             Some(SettingsSection::Code) => SettingsSection::CodeIndexing,
             Some(SettingsSection::Scripting) if !FeatureFlag::WarpControlCli.is_enabled() => {
-                SettingsSection::Account
+                SettingsSection::Appearance
             }
             Some(section) if section.is_subpage() => section,
             other => other.unwrap_or_default(),

@@ -542,8 +542,11 @@ impl SettingsPageMeta for MCPServersSettingsPageView {
         SettingsSection::MCPServers
     }
 
+    // Terminal-only build: MCP servers are agent tooling and the page is only
+    // reachable from the Agents umbrella, so it is never rendered.
+    // See `MainSettingsPageView::should_render`.
     fn should_render(&self, _ctx: &AppContext) -> bool {
-        true
+        false
     }
 
     fn update_filter(&mut self, query: &str, ctx: &mut ViewContext<Self>) -> MatchData {

@@ -486,6 +486,14 @@ lto = "thin"
 # compiler errors. We use a shorthand to get around these issues.
 [profile.rlto]
 inherits = "release-lto"
+# Terminal-only build: the profile the portable build ships from.
+#
+# NOTE: on Windows/MSVC this buys almost nothing -- debug info is emitted to a
+# separate .pdb (635 MB, not shipped) rather than into the .exe, so stripping
+# changed the binary by ~0.1 MB. The ~336 MB is compiled code, not symbols.
+# Kept because it does reduce binary size on ELF/Mach-O targets, and because a
+# shipped binary has no use for symbol tables.
+strip = "symbols"
 
 # A custom release-like profile that forces debug assertions on.
 [profile.release-lto-debug_assertions]
