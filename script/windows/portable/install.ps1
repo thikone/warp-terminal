@@ -13,7 +13,11 @@
       * optionally a Desktop shortcut (-Desktop)
       * optionally adds this folder to your user PATH (-AddToPath)
 
-    Run uninstall.ps1 to reverse everything.
+    The Explorer "Open Warp in new tab/window" entries are NOT set up here --
+    the app claims those itself on every startup, so they always point at the
+    executable you actually ran.
+
+    Run uninstall.ps1 to reverse everything, including those entries.
 
 .PARAMETER Desktop
     Also create a Desktop shortcut.
@@ -85,7 +89,16 @@ if ($Desktop) {
     New-WarpShortcut -Directory ([Environment]::GetFolderPath('Desktop')) -Label 'Desktop'
 }
 
-# --- 3. User PATH ------------------------------------------------------------
+# --- 3. Explorer context menu ------------------------------------------------
+# Nothing to do: the app claims "Open Warp in new tab/window" itself on every
+# startup (app_services::windows::registry::register_context_menu_entries), so
+# the entries always point at the executable you actually launched. Writing them
+# from here risks recording a stale path, which is worse than useless -- it
+# starts a second binary that fails to hand off and can kill the running one.
+#
+# uninstall.ps1 removes the entries if you want them gone.
+
+# --- 4. User PATH ------------------------------------------------------------
 if ($AddToPath) {
     $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
     $entries  = @($userPath -split ';' | Where-Object { $_ })

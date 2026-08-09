@@ -1,4 +1,4 @@
-use registry::register_uri_handler;
+use registry::{register_context_menu_entries, register_uri_handler};
 #[cfg(feature = "release_bundle")]
 use warp_errors::report_error;
 use warpui::AppContext;
@@ -72,4 +72,7 @@ pub(super) fn init(_ctx: &mut AppContext) {
     #[cfg(feature = "release_bundle")]
     _ctx.add_singleton_model(SingleInstanceManager::new);
     register_uri_handler();
+    // Reclaim the Explorer context menu for this executable on every launch, so
+    // the entries can never point at a binary that has moved or been replaced.
+    register_context_menu_entries();
 }

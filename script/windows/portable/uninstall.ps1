@@ -61,7 +61,22 @@ foreach ($dir in @([Environment]::GetFolderPath('Programs'), [Environment]::GetF
     $Changes.Add("Removed shortcut: $linkPath")
 }
 
-# --- 2. User PATH ------------------------------------------------------------
+# --- 2. Explorer context menu ------------------------------------------------
+# Only removes our WarpOss* keys, so an installed Warp's own entries are safe.
+foreach ($key in @('WarpOssTab', 'WarpOssWindow')) {
+    foreach ($scope in @(
+        'Registry::HKEY_CURRENT_USER\Software\Classes\Directory\shell',
+        'Registry::HKEY_CURRENT_USER\Software\Classes\Directory\Background\shell'
+    )) {
+        $p = Join-Path $scope $key
+        if (Test-Path $p) {
+            Remove-Item -Path $p -Recurse -Force
+            $Changes.Add("Removed context-menu entry: $key ($(Split-Path $scope -Leaf))")
+        }
+    }
+}
+
+# --- 3. User PATH ------------------------------------------------------------
 $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
 if ($userPath) {
     $entries = @($userPath -split ';' | Where-Object { $_ })
