@@ -36,6 +36,56 @@ pub const BLOCK_SEPARATOR: &str = "\n";
 /// Timestamp format used by the `{timestamp}` and `{finished-timestamp}` tokens.
 const TIMESTAMP_FORMAT: &str = "%Y%m%d%H%M%S";
 
+/// What a capture command covers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CaptureScope {
+    /// The target block(s), output only.
+    BlockOutput,
+    /// The target block(s), command line plus output.
+    BlockFull,
+    /// Every block in the session, command lines plus output.
+    Session,
+}
+
+/// One capture command: what to write, and whether the file stays open.
+///
+/// The six menu commands differ only along these two axes, so they all funnel
+/// through a single handler.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CaptureRequest {
+    pub scope: CaptureScope,
+    /// `true` for the streaming commands. A streaming request degrades to a
+    /// plain save when nothing is running, so it is never an error.
+    pub keep_open: bool,
+}
+
+impl CaptureRequest {
+    pub fn block_output(keep_open: bool) -> Self {
+        Self {
+            scope: CaptureScope::BlockOutput,
+            keep_open,
+        }
+    }
+
+    pub fn block_full(keep_open: bool) -> Self {
+        Self {
+            scope: CaptureScope::BlockFull,
+            keep_open,
+        }
+    }
+
+    pub fn session(keep_open: bool) -> Self {
+        Self {
+            scope: CaptureScope::Session,
+            keep_open,
+        }
+    }
+
+    pub fn is_session(&self) -> bool {
+        matches!(self.scope, CaptureScope::Session)
+    }
+}
+
 /// Values substituted into a filename pattern.
 ///
 /// Each field is the *raw* value; [`expand_pattern`] sanitises them

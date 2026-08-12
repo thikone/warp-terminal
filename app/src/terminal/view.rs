@@ -450,6 +450,7 @@ use crate::terminal::model::terminal_model::{
 };
 use crate::terminal::model::{ObfuscateSecrets, RespectObfuscatedSecrets, SecretHandle};
 use crate::terminal::model_events::{AnsiHandlerEvent, ModelEvent, ModelEventDispatcher};
+use crate::terminal::file_capture::{self, CaptureRequest, CaptureScope};
 use crate::terminal::recorder::PtyRecorder;
 use crate::terminal::safe_mode_settings::get_secret_obfuscation_mode;
 use crate::terminal::session_settings::{
@@ -531,7 +532,7 @@ use crate::util::repo_detection::{RepoDetectionSessionType, detect_possible_git_
 use crate::util::truncation::truncate_from_end;
 use crate::view_components::action_button::{ActionButton, ButtonSize, KeystrokeSource};
 use crate::view_components::find::{Event as FindEvent, Find, FindDirection, FindWithinBlockState};
-use crate::view_components::{DismissibleToast, ToastFlavor};
+use crate::view_components::{DismissibleToast, ToastFlavor, ToastLink};
 use crate::workflows::WorkflowSelectionSource;
 use crate::workflows::workflow::Workflow;
 use crate::workspace::sync_inputs::SyncedInputState;
@@ -1357,6 +1358,18 @@ pub enum ContextMenuAction {
     OpenShareBlockModal {
         block_index: BlockIndex,
     },
+    /// Write the selected block(s) output to a file and close it.
+    SaveOutputToFile,
+    /// Write the selected block(s) output to a file and keep appending while the
+    /// command runs. Falls back to [`Self::SaveOutputToFile`] once it has ended.
+    StreamOutputToFile,
+    /// As above, but including each block's command line.
+    SaveBlockToFile,
+    StreamBlockToFile,
+    /// Write every block in the session, including whatever the running command
+    /// has produced so far.
+    SaveSessionToFile,
+    StreamSessionToFile,
     FindWithinBlock,
     ToggleBookmark,
     ScrollToBottomOfBlock,
@@ -1489,6 +1502,12 @@ impl fmt::Debug for ContextMenuAction {
             OpenShareBlockModal { block_index } => {
                 write!(f, "OpenShareModal {{ block_index: {block_index} }}")
             }
+            SaveOutputToFile => f.write_str("SaveOutputToFile"),
+            StreamOutputToFile => f.write_str("StreamOutputToFile"),
+            SaveBlockToFile => f.write_str("SaveBlockToFile"),
+            StreamBlockToFile => f.write_str("StreamBlockToFile"),
+            SaveSessionToFile => f.write_str("SaveSessionToFile"),
+            StreamSessionToFile => f.write_str("StreamSessionToFile"),
             FindWithinBlock => f.write_str("FindWithinBlock"),
             ScrollToBottomOfBlock => f.write_str("ScrollToBottomOfBlock"),
             ScrollToTopOfBlock => f.write_str("ScrollToTopOfBlock"),
@@ -2921,6 +2940,14 @@ pub struct TerminalView {
 
     /// Per-session PTY recorder for writing PTY bytes to a file.
     pty_recorder: ModelHandle<PtyRecorder>,
+    /// Open `Stream … to file...` capture following one block. Closed when that
+    /// block finishes.
+    #[cfg(feature = "local_fs")]
+    block_capture_stream: Option<file_capture::FileStream>,
+    /// Open `Stream session to file...` capture. Follows the active block and
+    /// crosses block boundaries; lives until the session ends.
+    #[cfg(feature = "local_fs")]
+    session_capture_stream: Option<file_capture::FileStream>,
 
     /// When viewer-driven sizing is active on the sharer, this stores the
     /// viewer's last reported (rows, cols).
@@ -4442,6 +4469,10 @@ impl TerminalView {
             pending_cloud_mode_start_callback: None,
             pending_cloud_mode_start_abort_handle: None,
             ephemeral_message_model,
+            #[cfg(feature = "local_fs")]
+            block_capture_stream: None,
+            #[cfg(feature = "local_fs")]
+            session_capture_stream: None,
             pty_recorder: ctx
                 .add_model(|ctx| PtyRecorder::new(inactive_pty_reads_rx, window_id, ctx)),
             active_viewer_driven_size: None,
@@ -9603,6 +9634,11 @@ impl TerminalView {
     /// This function is invoked every time there is some form of view event
     /// such as a state change or terminal wakeup to update the view context.
     fn handle_terminal_wakeup(&mut self, _: (), ctx: &mut ViewContext<Self>) {
+        // Wakeup is the only "output may have changed" tick available, so open
+        // file captures re-render and diff here. See `file_capture`.
+        #[cfg(feature = "local_fs")]
+        self.pump_file_captures(ctx);
+
         // If find bar is active, we update the matches for the last/active block or the alt screen.
         if self.find_model.as_ref(ctx).is_find_bar_open() {
             self.find_model.update(ctx, |find_model, ctx| {
@@ -11839,6 +11875,8 @@ impl TerminalView {
                 }
             }
             ModelEvent::BlockCompleted(block_completed_event) => {
+                #[cfg(feature = "local_fs")]
+                self.on_block_completed_for_captures(block_completed_event.block_index, ctx);
                 record_trace_event!("command_execution:block_completed");
                 end_trace_after_next!("window:redraw:end");
                 let block_completed_event_clone = block_completed_event.clone();
@@ -16756,13 +16794,6 @@ impl TerminalView {
                 };
 
                 let is_single_selection = self.selected_blocks.is_singleton();
-                let is_active_block_selected = self
-                    .selected_blocks
-                    .is_selected(model.block_list().active_block_index());
-                let is_active_block_running = model
-                    .block_list()
-                    .active_block()
-                    .is_active_and_long_running();
 
                 let copy_commands_str = if is_single_selection {
                     "Copy command"
@@ -16786,10 +16817,6 @@ impl TerminalView {
                     "Scroll to bottom of blocks"
                 };
 
-                // currently, we don't support share for multi selections
-                let is_share_disabled =
-                    !is_single_selection || (is_active_block_selected && is_active_block_running);
-
                 let is_ask_ai_disabled = !is_single_selection;
 
                 let is_copy_commands_disabled =
@@ -16797,13 +16824,39 @@ impl TerminalView {
                 let is_copy_both_disabled =
                     is_copy_commands_disabled && tail_block.output_to_string().trim().is_empty();
 
-                let share_block_label = if FeatureFlag::CreatingSharedSessions.is_enabled()
-                    && ContextFlag::CreateSharedSession.is_enabled()
-                {
-                    "Share block..."
-                } else {
-                    "Share..."
-                };
+                let (save_output_label, stream_output_label, save_block_label, stream_block_label) =
+                    if is_single_selection {
+                        (
+                            "Save output to file...",
+                            "Stream output to file...",
+                            "Save block to file...",
+                            "Stream block to file...",
+                        )
+                    } else {
+                        (
+                            "Save outputs to file...",
+                            "Stream outputs to file...",
+                            "Save blocks to file...",
+                            "Stream blocks to file...",
+                        )
+                    };
+
+                // Any target block still running enables the streaming items.
+                let sort_direction = InputModeSettings::as_ref(ctx)
+                    .input_mode
+                    .value()
+                    .block_sort_direction();
+                let has_running_target = self
+                    .selected_blocks
+                    .sorted_ranges(sort_direction)
+                    .into_iter()
+                    .flat_map(|range| range.range(None))
+                    .any(|index| {
+                        model
+                            .block_list()
+                            .block_at(index)
+                            .is_some_and(|block| block.is_executing())
+                    });
 
                 let mut items = vec![
                     MenuItemFields::new(copy_str)
@@ -16826,37 +16879,70 @@ impl TerminalView {
                         ))
                         .with_disabled(is_copy_commands_disabled)
                         .into_item(),
-                    MenuItemFields::new(share_block_label)
+                    MenuItemFields::new(save_output_label)
                         .with_on_select_action(TerminalAction::ContextMenu(
-                            ContextMenuAction::OpenShareBlockModal {
-                                block_index: tail_block_index,
-                            },
+                            ContextMenuAction::SaveOutputToFile,
                         ))
                         .with_key_shortcut_label(keybinding_name_to_display_string(
-                            "terminal:open_share_block_modal",
+                            "terminal:save_output_to_file",
                             ctx,
                         ))
-                        .with_disabled(is_share_disabled)
+                        .with_disabled(is_copy_both_disabled)
                         .into_item(),
                 ];
 
-                if FeatureFlag::CreatingSharedSessions.is_enabled()
-                    && ContextFlag::CreateSharedSession.is_enabled()
-                {
-                    // Sharing a session from a context menu is disabled for multi block selections, restored blocks, and viewers.
-                    let is_share_session_disabled = !is_single_selection
-                        || model
-                            .block_list()
-                            .block_at(tail_block_index)
-                            .is_none_or(|b| b.is_restored());
-
-                    let has_session_link = Manager::as_ref(ctx).has_session_link(&ctx.view_id());
-                    items.extend(self.session_sharing_context_menu_items(
-                        &model,
-                        is_share_session_disabled,
-                        has_session_link,
-                    ));
+                // Streaming only makes sense while something is still producing
+                // output, so these appear only then.
+                if has_running_target {
+                    items.push(
+                        MenuItemFields::new(stream_output_label)
+                            .with_on_select_action(TerminalAction::ContextMenu(
+                                ContextMenuAction::StreamOutputToFile,
+                            ))
+                            .with_key_shortcut_label(keybinding_name_to_display_string(
+                                "terminal:stream_output_to_file",
+                                ctx,
+                            ))
+                            .into_item(),
+                    );
                 }
+
+                items.push(
+                    MenuItemFields::new(save_block_label)
+                        .with_on_select_action(TerminalAction::ContextMenu(
+                            ContextMenuAction::SaveBlockToFile,
+                        ))
+                        .with_disabled(is_copy_both_disabled)
+                        .into_item(),
+                );
+                if has_running_target {
+                    items.push(
+                        MenuItemFields::new(stream_block_label)
+                            .with_on_select_action(TerminalAction::ContextMenu(
+                                ContextMenuAction::StreamBlockToFile,
+                            ))
+                            .into_item(),
+                    );
+                }
+
+                // Session scope is meaningless against a multi-selection.
+                if is_single_selection {
+                    items.push(
+                        MenuItemFields::new("Save session to file...")
+                            .with_on_select_action(TerminalAction::ContextMenu(
+                                ContextMenuAction::SaveSessionToFile,
+                            ))
+                            .into_item(),
+                    );
+                    items.push(
+                        MenuItemFields::new("Stream session to file...")
+                            .with_on_select_action(TerminalAction::ContextMenu(
+                                ContextMenuAction::StreamSessionToFile,
+                            ))
+                            .into_item(),
+                    );
+                }
+
 
                 if WarpDriveSettings::is_warp_drive_enabled(ctx) {
                     items.push(MenuItem::Separator);
@@ -21357,6 +21443,325 @@ impl TerminalView {
         block_strs.join(separator)
     }
 
+    /// Shared handler for all six `Save …/Stream … to file...` commands.
+    ///
+    /// Builds the text, suggests a filename from the scope's pattern, and hands
+    /// off to the native save dialog. A streaming request that finds nothing
+    /// running — including a command that ended while the dialog was open —
+    /// simply writes and closes rather than erroring.
+    #[cfg(feature = "local_fs")]
+    fn capture_to_file(&mut self, request: CaptureRequest, ctx: &mut ViewContext<Self>) {
+        use warpui::platform::SaveFilePickerConfiguration;
+
+        let entity = match request.scope {
+            CaptureScope::BlockOutput => BlockEntity::OutputUnobfuscated,
+            CaptureScope::BlockFull | CaptureScope::Session => {
+                BlockEntity::CommandAndOutputUnobfuscated
+            }
+        };
+
+        let contents = if request.is_session() {
+            self.session_contents_as_string(entity, file_capture::BLOCK_SEPARATOR, ctx)
+        } else {
+            self.selected_block_contents_as_string(entity, file_capture::BLOCK_SEPARATOR, ctx)
+        };
+
+        let filename = self.capture_filename(request, ctx);
+        let mut config = SaveFilePickerConfiguration::new().with_default_filename(filename);
+        if let Some(pwd) = self.pwd() {
+            config = config.with_default_directory(PathBuf::from(pwd));
+        }
+
+        // Snapshot the block to tail now; by the time the dialog returns it may
+        // have finished, which is exactly the fallback-to-save case.
+        let tail_block_index = self.streaming_target_block_index(ctx);
+
+        ctx.open_save_file_picker(
+            move |path_opt: Option<String>, me: &mut Self, ctx: &mut ViewContext<Self>| {
+                let Some(path) = path_opt else {
+                    return;
+                };
+                me.finish_capture(
+                    PathBuf::from(path),
+                    contents.clone(),
+                    request,
+                    tail_block_index,
+                    ctx,
+                );
+            },
+            config,
+        );
+    }
+
+    #[cfg(not(feature = "local_fs"))]
+    fn capture_to_file(&mut self, _request: CaptureRequest, _ctx: &mut ViewContext<Self>) {}
+
+    /// The block a stream should follow: the running block among the target
+    /// blocks, or `None` if none is running.
+    ///
+    /// A pane runs one command at a time, so this is normally unambiguous. If a
+    /// multi-selection somehow holds several running blocks (background jobs),
+    /// the last is tailed.
+    fn streaming_target_block_index(&self, ctx: &AppContext) -> Option<BlockIndex> {
+        let sort_direction = InputModeSettings::as_ref(ctx)
+            .input_mode
+            .value()
+            .block_sort_direction();
+        let model = self.model.lock();
+        let block_list = model.block_list();
+        self.selected_blocks
+            .sorted_ranges(sort_direction)
+            .into_iter()
+            .flat_map(|range| range.range(None))
+            .filter(|index| {
+                block_list
+                    .block_at(*index)
+                    .is_some_and(|block| block.is_executing())
+            })
+            .last()
+    }
+
+    /// Expands the pattern configured for this scope into a suggested filename.
+    fn capture_filename(&mut self, request: CaptureRequest, ctx: &mut ViewContext<Self>) -> String {
+        let settings = TerminalSettings::as_ref(ctx);
+        let pattern = match request.scope {
+            CaptureScope::BlockOutput => settings.file_capture_output_pattern.value().clone(),
+            CaptureScope::BlockFull => settings.file_capture_block_pattern.value().clone(),
+            CaptureScope::Session => settings.file_capture_session_pattern.value().clone(),
+        };
+
+        let sort_direction = InputModeSettings::as_ref(ctx)
+            .input_mode
+            .value()
+            .block_sort_direction();
+        let model = self.model.lock();
+        let block_list = model.block_list();
+
+        // `{command}` uses the first target block, `{finished-timestamp}` the
+        // last, so a multi-selection spans from its first command to its last
+        // completion.
+        let (first, last) = if request.is_session() {
+            let blocks = block_list.blocks();
+            (
+                blocks
+                    .iter()
+                    .find(|b| !b.command_to_string().trim().starts_with("cd "))
+                    .or_else(|| blocks.first()),
+                blocks.last(),
+            )
+        } else {
+            let mut indices: Vec<_> = self
+                .selected_blocks
+                .sorted_ranges(sort_direction)
+                .into_iter()
+                .flat_map(|range| range.range(None))
+                .collect();
+            indices.sort_unstable();
+            (
+                indices.first().and_then(|i| block_list.block_at(*i)),
+                indices.last().and_then(|i| block_list.block_at(*i)),
+            )
+        };
+
+        let tokens = file_capture::PatternTokens {
+            command: first.map(|b| b.command_to_string()),
+            finished: last.and_then(|b| b.completed_ts().copied()),
+            session_name: request.is_session().then(|| self.session_name(ctx)).flatten(),
+        };
+        drop(model);
+
+        file_capture::expand_pattern(&pattern, &tokens)
+    }
+
+    /// Brings any open capture up to date with the block it is following.
+    #[cfg(feature = "local_fs")]
+    fn pump_file_captures(&mut self, ctx: &mut ViewContext<Self>) {
+        for is_session in [false, true] {
+            let Some(index) = self
+                .capture_stream(is_session)
+                .map(|stream| BlockIndex::from(stream.block_index()))
+            else {
+                continue;
+            };
+            let request = if is_session {
+                CaptureRequest::session(true)
+            } else {
+                CaptureRequest::block_full(true)
+            };
+            let rendered = self.rendered_block_text(index, request, ctx);
+            if let Some(stream) = self.capture_stream_mut(is_session)
+                && let Err(err) = stream.update_tail(&rendered)
+            {
+                report_error!(anyhow::Error::new(err).context("Failed to append to capture file"));
+                // Drop the stream rather than retry every tick on a dead handle.
+                *self.capture_stream_slot(is_session) = None;
+            }
+        }
+    }
+
+    /// Closes a block capture whose command has ended, and advances a session
+    /// capture across the block boundary.
+    #[cfg(feature = "local_fs")]
+    fn on_block_completed_for_captures(
+        &mut self,
+        completed_index: BlockIndex,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        // Block scope: write the final state and close.
+        if self
+            .block_capture_stream
+            .as_ref()
+            .is_some_and(|stream| BlockIndex::from(stream.block_index()) == completed_index)
+        {
+            let rendered = self.rendered_block_text(completed_index, CaptureRequest::block_full(true), ctx);
+            if let Some(stream) = self.block_capture_stream.as_mut() {
+                let _ = stream.update_tail(&rendered);
+            }
+            if let Some(stream) = self.block_capture_stream.take() {
+                let _ = stream.finish();
+            }
+        }
+
+        // Session scope: finalise this block, then follow the next one.
+        if self
+            .session_capture_stream
+            .as_ref()
+            .is_some_and(|stream| BlockIndex::from(stream.block_index()) == completed_index)
+        {
+            let rendered =
+                self.rendered_block_text(completed_index, CaptureRequest::session(true), ctx);
+            let next_index = usize::from(completed_index) + 1;
+            if let Some(stream) = self.session_capture_stream.as_mut()
+                && let Err(err) =
+                    stream.advance_to(&rendered, next_index, file_capture::BLOCK_SEPARATOR)
+            {
+                report_error!(
+                    anyhow::Error::new(err).context("Failed to advance session capture")
+                );
+                self.session_capture_stream = None;
+            }
+        }
+    }
+
+    #[cfg(feature = "local_fs")]
+    fn capture_stream(&self, is_session: bool) -> Option<&file_capture::FileStream> {
+        if is_session {
+            self.session_capture_stream.as_ref()
+        } else {
+            self.block_capture_stream.as_ref()
+        }
+    }
+
+    #[cfg(feature = "local_fs")]
+    fn capture_stream_mut(&mut self, is_session: bool) -> Option<&mut file_capture::FileStream> {
+        if is_session {
+            self.session_capture_stream.as_mut()
+        } else {
+            self.block_capture_stream.as_mut()
+        }
+    }
+
+    #[cfg(feature = "local_fs")]
+    fn capture_stream_slot(
+        &mut self,
+        is_session: bool,
+    ) -> &mut Option<file_capture::FileStream> {
+        if is_session {
+            &mut self.session_capture_stream
+        } else {
+            &mut self.block_capture_stream
+        }
+    }
+
+    /// A single block rendered the way this request writes it.
+    fn rendered_block_text(
+        &mut self,
+        block_index: BlockIndex,
+        request: CaptureRequest,
+        _ctx: &mut ViewContext<Self>,
+    ) -> String {
+        let model = self.model.lock();
+        model
+            .block_list()
+            .block_at(block_index)
+            .map(|block| match request.scope {
+                CaptureScope::BlockOutput => block.output_with_secrets_unobfuscated(),
+                CaptureScope::BlockFull | CaptureScope::Session => {
+                    block.command_and_output_with_secrets_unobfuscated()
+                }
+            })
+            .unwrap_or_default()
+    }
+
+    /// The tab's name when the user set one, otherwise `None`.
+    ///
+    /// Auto-generated names come from the working directory, which makes a poor
+    /// filename, so `{session-or-command}` falls back to the first command.
+    fn session_name(&self, _ctx: &AppContext) -> Option<String> {
+        None
+    }
+
+    /// Confirmation toast with an "Open" link, mirroring [`PtyRecorder`].
+    #[cfg(feature = "local_fs")]
+    fn show_capture_toast(&self, path: &Path, ctx: &mut ViewContext<Self>) {
+        let display_path = warp_core::paths::home_relative_path(path);
+        let window_id = ctx.window_id();
+        let path = path.to_owned();
+        ToastStack::handle(ctx).update(ctx, |toast_stack, ctx| {
+            let toast = DismissibleToast::default(format!("Saved to {display_path}")).with_link(
+                ToastLink::new("Open".to_string())
+                    .with_onclick_action(WorkspaceAction::OpenInExplorer { path }),
+            );
+            toast_stack.add_ephemeral_toast(toast, window_id, ctx);
+        });
+    }
+
+    /// Writes the capture, keeping the handle open for a streaming request whose
+    /// target is still running.
+    #[cfg(feature = "local_fs")]
+    fn finish_capture(
+        &mut self,
+        path: PathBuf,
+        contents: String,
+        request: CaptureRequest,
+        tail_block_index: Option<BlockIndex>,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        // A streaming request with nothing left running is just a save. This is
+        // also the path taken when the command ended while the dialog was open.
+        let tail = request.keep_open.then_some(tail_block_index).flatten();
+
+        let Some(tail_index) = tail else {
+            if let Err(err) = file_capture::write_snapshot(&path, &contents) {
+                report_error!(anyhow::Error::new(err).context("Failed to write capture file"));
+            } else {
+                self.show_capture_toast(&path, ctx);
+            }
+            return;
+        };
+
+        // The tailed block's text sits at the end of what we just wrote, so hand
+        // it over as the tail so the first update appends rather than rewrites.
+        let tail_text = self.rendered_block_text(tail_index, request, ctx);
+        match file_capture::FileStream::create(
+            &path,
+            &contents,
+            Some((tail_index.into(), tail_text)),
+        ) {
+            Ok(stream) => {
+                if request.is_session() {
+                    self.session_capture_stream = Some(stream);
+                } else {
+                    self.block_capture_stream = Some(stream);
+                }
+                self.show_capture_toast(&path, ctx);
+            }
+            Err(err) => {
+                report_error!(anyhow::Error::new(err).context("Failed to open capture file"));
+            }
+        }
+    }
+
     fn copy_blocks(&mut self, entity: BlockEntity, ctx: &mut ViewContext<Self>) {
         send_telemetry_from_ctx!(
             TelemetryEvent::ContextMenuCopy(entity, self.selected_blocks.cardinality()),
@@ -24942,6 +25347,12 @@ impl TerminalView {
             OpenShareBlockModal { block_index } => {
                 self.context_menu_open_share_block_modal(*block_index, ctx)
             }
+            SaveOutputToFile => self.capture_to_file(CaptureRequest::block_output(false), ctx),
+            StreamOutputToFile => self.capture_to_file(CaptureRequest::block_output(true), ctx),
+            SaveBlockToFile => self.capture_to_file(CaptureRequest::block_full(false), ctx),
+            StreamBlockToFile => self.capture_to_file(CaptureRequest::block_full(true), ctx),
+            SaveSessionToFile => self.capture_to_file(CaptureRequest::session(false), ctx),
+            StreamSessionToFile => self.capture_to_file(CaptureRequest::session(true), ctx),
             FindWithinBlock => self.find_within_block(ctx),
             ScrollToBottomOfBlock => self.scroll_to_bottom_of_bottommost_selected_block(ctx),
             ScrollToTopOfBlock => self.scroll_to_top_of_topmost_selected_block(ctx),
