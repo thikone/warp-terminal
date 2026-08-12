@@ -160,6 +160,10 @@ pub enum TerminalAction {
     Copy,
     CopyOutputs,
     CopyCommands,
+    /// Keybinding counterparts of the context-menu capture commands. They act on
+    /// the selection, or the last block when nothing is selected.
+    SaveOutputToFile,
+    StreamOutputToFile,
     CopyGitBranch,
     OpenShareModal,
     ReinputCommands,
@@ -531,6 +535,8 @@ impl fmt::Debug for TerminalAction {
             Paste => f.write_str("Paste"),
             Copy => f.write_str("Copy"),
             CopyOutputs => f.write_str("CopyOutputs"),
+            SaveOutputToFile => f.write_str("SaveOutputToFile"),
+            StreamOutputToFile => f.write_str("StreamOutputToFile"),
             CopyCommands => f.write_str("CopyCommands"),
             CopyGitBranch => f.write_str("CopyGitBranch"),
             OpenShareModal => f.write_str("OpenShareModal"),

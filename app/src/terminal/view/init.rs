@@ -443,7 +443,6 @@ pub fn init(app: &mut AppContext) {
             "Toggle team workflows modal",
             TerminalAction::OpenWorkflowModal,
         )
-        .with_key_binding(cmd_or_ctrl_shift("s"))
         .with_context_predicate(
             id!("Terminal")
                 & !id!("IMEOpen")
@@ -585,6 +584,23 @@ pub fn init(app: &mut AppContext) {
         .with_context_predicate(
             id!("Terminal") & ne!("TerminalView_BlockSelectionCardinality", "None"),
         ),
+        // Act on the selection, or the last block when nothing is selected, so
+        // they work straight after a command finishes. Deliberately no
+        // BlockSelectionCardinality predicate for that reason.
+        EditableBinding::new(
+            "terminal:save_output_to_file",
+            "Save command output to file",
+            TerminalAction::SaveOutputToFile,
+        )
+        .with_key_binding(cmd_or_ctrl_shift("s"))
+        .with_context_predicate(id!("Terminal")),
+        EditableBinding::new(
+            "terminal:stream_output_to_file",
+            "Stream command output to file",
+            TerminalAction::StreamOutputToFile,
+        )
+        .with_key_binding("ctrl-alt-shift-s")
+        .with_context_predicate(id!("Terminal")),
         EditableBinding::new(
             "terminal:copy",
             "Copy command and output",

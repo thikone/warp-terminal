@@ -21460,8 +21460,13 @@ impl TerminalView {
             }
         };
 
+        // The keybindings carry no selection predicate so they work right after a
+        // command finishes; with nothing selected they target the last block.
         let contents = if request.is_session() {
             self.session_contents_as_string(entity, file_capture::BLOCK_SEPARATOR, ctx)
+        } else if self.selected_blocks.is_empty() {
+            let active_index = self.model.lock().block_list().active_block_index();
+            self.rendered_block_text(active_index, request, ctx)
         } else {
             self.selected_block_contents_as_string(entity, file_capture::BLOCK_SEPARATOR, ctx)
         };
@@ -21509,6 +21514,14 @@ impl TerminalView {
             .block_sort_direction();
         let model = self.model.lock();
         let block_list = model.block_list();
+        // Same fallback as `capture_to_file`: no selection means the last block.
+        if self.selected_blocks.is_empty() {
+            let active = block_list.active_block_index();
+            return block_list
+                .block_at(active)
+                .is_some_and(|block| block.is_executing())
+                .then_some(active);
+        }
         self.selected_blocks
             .sorted_ranges(sort_direction)
             .into_iter()
@@ -21550,6 +21563,11 @@ impl TerminalView {
                 blocks.last(),
             )
         } else {
+            if self.selected_blocks.is_empty() {
+                let active = block_list.active_block_index();
+                let block = block_list.block_at(active);
+                (block, block)
+            } else {
             let mut indices: Vec<_> = self
                 .selected_blocks
                 .sorted_ranges(sort_direction)
@@ -21561,6 +21579,7 @@ impl TerminalView {
                 indices.first().and_then(|i| block_list.block_at(*i)),
                 indices.last().and_then(|i| block_list.block_at(*i)),
             )
+            }
         };
 
         let tokens = file_capture::PatternTokens {
@@ -26800,6 +26819,9 @@ impl TypedActionView for TerminalView {
                     Empty
                 }
             }
+            // Nothing to announce at dispatch: these open a save dialog, and the
+            // confirmation toast reports the result once the file is written.
+            SaveOutputToFile | StreamOutputToFile => Empty,
             SelectAllBlocks => Custom(AccessibilityContent::new_without_help(
                 format!(
                     "Selected all {} blocks.",
@@ -27218,6 +27240,8 @@ impl TypedActionView for TerminalView {
             Paste => self.paste(false, ctx),
             Copy => self.copy(ctx),
             CopyOutputs => self.copy_outputs(ctx),
+            SaveOutputToFile => self.capture_to_file(CaptureRequest::block_output(false), ctx),
+            StreamOutputToFile => self.capture_to_file(CaptureRequest::block_output(true), ctx),
             CopyCommands => self.copy_commands(ctx),
             CopyGitBranch => {
                 let prompt_position = match self.selected_blocks.tail() {
