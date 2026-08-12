@@ -2162,6 +2162,11 @@ pub enum BlockEntity {
     Output,
     FilteredOutput,
     CommandAndOutput,
+    /// Output only, secrets left in plaintext. Used when capturing to a file.
+    OutputUnobfuscated,
+    /// Command line plus output, secrets left in plaintext. Used when capturing
+    /// to a file.
+    CommandAndOutputUnobfuscated,
 }
 
 impl BlockEntity {
@@ -2171,6 +2176,8 @@ impl BlockEntity {
             BlockEntity::Output => "Output",
             BlockEntity::CommandAndOutput => "Both",
             BlockEntity::FilteredOutput => "FilteredOutput",
+            BlockEntity::OutputUnobfuscated => "OutputUnobfuscated",
+            BlockEntity::CommandAndOutputUnobfuscated => "BothUnobfuscated",
         }
     }
 }
@@ -21308,6 +21315,48 @@ impl TerminalView {
         }
     }
 
+    /// Every block in the session as text, in order, for the session-scoped file
+    /// capture commands.
+    ///
+    /// This is the whole-session counterpart of
+    /// [`Self::selected_block_contents_as_string`]; the difference is that it
+    /// walks the entire block list rather than the selection. It deliberately
+    /// does **not** filter on [`Block::is_done`], so the currently-running
+    /// command contributes whatever it has produced so far — that partial
+    /// content is the point of "save session while something is still running".
+    fn session_contents_as_string(
+        &mut self,
+        entity: BlockEntity,
+        separator: &str,
+        ctx: &mut ViewContext<Self>,
+    ) -> String {
+        let _ = ctx;
+        let model = self.model.lock();
+        let agent_view_state = model.block_list().transcript_scope();
+        let mut block_strs = vec![];
+
+        for block in model.block_list().blocks() {
+            if block.is_empty(agent_view_state) {
+                continue;
+            }
+            let block_str = match entity {
+                BlockEntity::Command => block.command_to_string(),
+                BlockEntity::Output => block.output_to_string_force_full_grid_contents(),
+                BlockEntity::CommandAndOutput => block.command_and_output_to_string(),
+                BlockEntity::FilteredOutput => block.output_to_string(),
+                BlockEntity::OutputUnobfuscated => block.output_with_secrets_unobfuscated(),
+                BlockEntity::CommandAndOutputUnobfuscated => {
+                    block.command_and_output_with_secrets_unobfuscated()
+                }
+            };
+            if !block_str.trim().is_empty() {
+                block_strs.push(block_str);
+            }
+        }
+
+        block_strs.join(separator)
+    }
+
     fn copy_blocks(&mut self, entity: BlockEntity, ctx: &mut ViewContext<Self>) {
         send_telemetry_from_ctx!(
             TelemetryEvent::ContextMenuCopy(entity, self.selected_blocks.cardinality()),
@@ -21356,6 +21405,10 @@ impl TerminalView {
                     BlockEntity::Output => block.output_to_string_force_full_grid_contents(),
                     BlockEntity::CommandAndOutput => block.command_and_output_to_string(),
                     BlockEntity::FilteredOutput => block.output_to_string(),
+                    BlockEntity::OutputUnobfuscated => block.output_with_secrets_unobfuscated(),
+                    BlockEntity::CommandAndOutputUnobfuscated => {
+                        block.command_and_output_with_secrets_unobfuscated()
+                    }
                 };
 
                 if !block_str.trim().is_empty() {

@@ -2227,6 +2227,23 @@ impl Block {
             .contents_to_string_with_secrets_unobfuscated(false, None)
     }
 
+    /// The command line followed by its output, with secrets left in plaintext.
+    ///
+    /// The unobfuscated counterpart of [`Self::command_and_output_to_string`],
+    /// used when capturing to a file: a saved log is meant to record what
+    /// actually ran, so it deliberately contains more than the screen shows.
+    ///
+    /// Unlike the obfuscating version this never takes the `honor_ps1`
+    /// `bounds_to_string` shortcut, because that path reads straight from the
+    /// grid and would re-apply obfuscation.
+    pub fn command_and_output_with_secrets_unobfuscated(&self) -> String {
+        format!(
+            "{}\n{}",
+            self.command_to_string(),
+            self.output_with_secrets_unobfuscated()
+        )
+    }
+
     /// Returns an iterator over all grids in the block.
     pub fn all_grids_iter(&self) -> impl Iterator<Item = &BlockGrid> {
         [
