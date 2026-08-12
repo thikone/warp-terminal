@@ -64,6 +64,7 @@ pub mod platform;
 pub mod profile_model_selector;
 pub mod prompt;
 pub mod prompt_render_helper;
+pub mod file_capture;
 pub mod recorder;
 pub mod remote_tty;
 pub mod resizable_data;
