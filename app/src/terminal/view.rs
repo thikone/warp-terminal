@@ -458,7 +458,6 @@ use crate::terminal::session_settings::{
     SessionSettings, SessionSettingsChangedEvent, ToolbarChipSelection,
 };
 use crate::terminal::settings::{TerminalSettings, TerminalSettingsChangedEvent};
-use crate::terminal::shared_session::manager::Manager;
 use crate::terminal::shared_session::role_change_modal::{
     RoleChangeCloseSource, RoleChangeOpenSource,
 };
@@ -17155,22 +17154,7 @@ impl TerminalView {
                 // Session capture is the one thing that still makes sense with
                 // nothing selected -- including on a brand-new session, where
                 // streaming can be armed before the first command is even run.
-                if Self::session_has_content(&model) {
-                    items.push(
-                        MenuItemFields::new("Save session to file...")
-                            .with_on_select_action(TerminalAction::ContextMenu(
-                                ContextMenuAction::SaveSessionToFile,
-                            ))
-                            .into_item(),
-                    );
-                }
-                items.push(
-                    MenuItemFields::new("Stream session to file...")
-                        .with_on_select_action(TerminalAction::ContextMenu(
-                            ContextMenuAction::StreamSessionToFile,
-                        ))
-                        .into_item(),
-                );
+                items.extend(self.session_capture_context_menu_items(&model));
 
                 items
             }
@@ -17637,12 +17621,7 @@ impl TerminalView {
                 .into_item(),
         );
 
-        if FeatureFlag::CreatingSharedSessions.is_enabled()
-            && ContextFlag::CreateSharedSession.is_enabled()
-        {
-            let has_session_link = Manager::as_ref(ctx).has_session_link(&ctx.view_id());
-            items.extend(self.session_sharing_context_menu_items(&model, false, has_session_link));
-        }
+        items.extend(self.session_capture_context_menu_items(&model));
 
         // Section 2: AI Command Search, Ask Warp AI
         items.extend([
@@ -17876,16 +17855,7 @@ impl TerminalView {
             }
         }
 
-        if FeatureFlag::CreatingSharedSessions.is_enabled()
-            && ContextFlag::CreateSharedSession.is_enabled()
-        {
-            let has_session_link = Manager::as_ref(ctx).has_session_link(&ctx.view_id());
-            menu_items.extend(self.session_sharing_context_menu_items(
-                &model,
-                false,
-                has_session_link,
-            ));
-        }
+        menu_items.extend(self.session_capture_context_menu_items(&model));
         let current_shell = model.shell_launch_state().available_shell();
         let mut pane_context_menu_items = self.pane_context_menu_items(current_shell, ctx);
         if !menu_items.is_empty() && !pane_context_menu_items.is_empty() {
@@ -21536,6 +21506,40 @@ impl TerminalView {
                     .is_some_and(|block| block.is_executing())
             })
             .last()
+    }
+
+    /// Session capture items for any context menu that used to offer
+    /// "Share session...".
+    ///
+    /// Three menus reach this -- the empty block list, the input area, and the
+    /// selected-text menu -- and they previously each inlined their own call to
+    /// `session_sharing_context_menu_items`. Sharing one builder keeps them from
+    /// drifting apart as this fork evolves.
+    ///
+    /// Saving needs something to save; streaming can always be armed, including
+    /// on a session that has not run anything yet.
+    fn session_capture_context_menu_items(
+        &self,
+        model: &TerminalModel,
+    ) -> Vec<MenuItem<TerminalAction>> {
+        let mut items = Vec::new();
+        if Self::session_has_content(model) {
+            items.push(
+                MenuItemFields::new("Save session to file...")
+                    .with_on_select_action(TerminalAction::ContextMenu(
+                        ContextMenuAction::SaveSessionToFile,
+                    ))
+                    .into_item(),
+            );
+        }
+        items.push(
+            MenuItemFields::new("Stream session to file...")
+                .with_on_select_action(TerminalAction::ContextMenu(
+                    ContextMenuAction::StreamSessionToFile,
+                ))
+                .into_item(),
+        );
+        items
     }
 
     /// Public wrapper over [`Self::session_has_content`] for the tab menu, which
