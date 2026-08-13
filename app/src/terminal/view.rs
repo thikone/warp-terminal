@@ -2940,6 +2940,10 @@ pub struct TerminalView {
 
     /// Per-session PTY recorder for writing PTY bytes to a file.
     pty_recorder: ModelHandle<PtyRecorder>,
+    /// Tab name for the capture currently being started, handed down from the
+    /// tab menu. `None` for captures started from the block context menu.
+    #[cfg(feature = "local_fs")]
+    pending_capture_session_name: Option<String>,
     /// Open `Stream … to file...` capture following one block. Closed when that
     /// block finishes.
     #[cfg(feature = "local_fs")]
@@ -4469,6 +4473,8 @@ impl TerminalView {
             pending_cloud_mode_start_callback: None,
             pending_cloud_mode_start_abort_handle: None,
             ephemeral_message_model,
+            #[cfg(feature = "local_fs")]
+            pending_capture_session_name: None,
             #[cfg(feature = "local_fs")]
             block_capture_stream: None,
             #[cfg(feature = "local_fs")]
@@ -17143,19 +17149,28 @@ impl TerminalView {
                 None,
                 true,
             ) => {
-                // If selection is empty, only show non-block related options
+                // If selection is empty, only show non-block related options.
                 let mut items = Vec::new();
 
-                if FeatureFlag::CreatingSharedSessions.is_enabled()
-                    && ContextFlag::CreateSharedSession.is_enabled()
-                {
-                    let has_session_link = Manager::as_ref(ctx).has_session_link(&ctx.view_id());
-                    items.extend(self.session_sharing_context_menu_items(
-                        &model,
-                        false,
-                        has_session_link,
-                    ));
+                // Session capture is the one thing that still makes sense with
+                // nothing selected -- including on a brand-new session, where
+                // streaming can be armed before the first command is even run.
+                if Self::session_has_content(&model) {
+                    items.push(
+                        MenuItemFields::new("Save session to file...")
+                            .with_on_select_action(TerminalAction::ContextMenu(
+                                ContextMenuAction::SaveSessionToFile,
+                            ))
+                            .into_item(),
+                    );
                 }
+                items.push(
+                    MenuItemFields::new("Stream session to file...")
+                        .with_on_select_action(TerminalAction::ContextMenu(
+                            ContextMenuAction::StreamSessionToFile,
+                        ))
+                        .into_item(),
+                );
 
                 items
             }
@@ -21453,46 +21468,24 @@ impl TerminalView {
     fn capture_to_file(&mut self, request: CaptureRequest, ctx: &mut ViewContext<Self>) {
         use warpui::platform::SaveFilePickerConfiguration;
 
-        let entity = match request.scope {
-            CaptureScope::BlockOutput => BlockEntity::OutputUnobfuscated,
-            CaptureScope::BlockFull | CaptureScope::Session => {
-                BlockEntity::CommandAndOutputUnobfuscated
-            }
-        };
-
-        // The keybindings carry no selection predicate so they work right after a
-        // command finishes; with nothing selected they target the last block.
-        let contents = if request.is_session() {
-            self.session_contents_as_string(entity, file_capture::BLOCK_SEPARATOR, ctx)
-        } else if self.selected_blocks.is_empty() {
-            let active_index = self.model.lock().block_list().active_block_index();
-            self.rendered_block_text(active_index, request, ctx)
-        } else {
-            self.selected_block_contents_as_string(entity, file_capture::BLOCK_SEPARATOR, ctx)
-        };
-
         let filename = self.capture_filename(request, ctx);
         let mut config = SaveFilePickerConfiguration::new().with_default_filename(filename);
         if let Some(pwd) = self.pwd() {
             config = config.with_default_directory(PathBuf::from(pwd));
         }
 
-        // Snapshot the block to tail now; by the time the dialog returns it may
-        // have finished, which is exactly the fallback-to-save case.
-        let tail_block_index = self.streaming_target_block_index(ctx);
-
+        // Deliberately nothing is captured here. The dialog can stay open for
+        // seconds while the command keeps producing output, so both the initial
+        // contents and the tail are taken together in the callback below. Taking
+        // the contents now and the tail later silently dropped everything
+        // emitted in between: the tail claimed that text was already written, so
+        // the first update found no delta and it never reached the file.
         ctx.open_save_file_picker(
             move |path_opt: Option<String>, me: &mut Self, ctx: &mut ViewContext<Self>| {
                 let Some(path) = path_opt else {
                     return;
                 };
-                me.finish_capture(
-                    PathBuf::from(path),
-                    contents.clone(),
-                    request,
-                    tail_block_index,
-                    ctx,
-                );
+                me.finish_capture(PathBuf::from(path), request, ctx);
             },
             config,
         );
@@ -21507,7 +21500,18 @@ impl TerminalView {
     /// A pane runs one command at a time, so this is normally unambiguous. If a
     /// multi-selection somehow holds several running blocks (background jobs),
     /// the last is tailed.
-    fn streaming_target_block_index(&self, ctx: &AppContext) -> Option<BlockIndex> {
+    fn streaming_target_block_index(
+        &self,
+        request: CaptureRequest,
+        ctx: &AppContext,
+    ) -> Option<BlockIndex> {
+        // Session scope follows the block list, not a command, so it always has
+        // a tail. Requiring `is_executing()` here made "Stream session to
+        // file..." silently behave as a save whenever the prompt was idle.
+        if request.is_session() {
+            return Some(self.model.lock().block_list().active_block_index());
+        }
+
         let sort_direction = InputModeSettings::as_ref(ctx)
             .input_mode
             .value()
@@ -21534,6 +21538,47 @@ impl TerminalView {
             .last()
     }
 
+    /// Public wrapper over [`Self::session_has_content`] for the tab menu, which
+    /// only has a `ViewHandle<TerminalView>` and cannot lock the model itself.
+    pub fn session_has_captured_content(&self) -> bool {
+        Self::session_has_content(&self.model.lock())
+    }
+
+    /// Whether the session has produced anything worth saving.
+    ///
+    /// A new session still holds the bootstrap block, so a bare `blocks()`
+    /// emptiness check would wrongly report content.
+    fn session_has_content(model: &TerminalModel) -> bool {
+        model
+            .block_list()
+            .blocks()
+            .iter()
+            .any(Self::is_nameable_command)
+    }
+
+    /// Whether a block's command is worth naming a file after.
+    ///
+    /// Block 0 of every session is Warp's own shell bootstrap -- a dot-source of
+    /// `pwsh.ps1` -- which produced suggested names like
+    /// `PS_._C_..._build_portable_pwsh.ps1_...`. `BootstrapStage::is_done()` is
+    /// true only for `PostBootstrapPrecmd`, so it rejects that block along with
+    /// the `.rc`/`$PROFILE` execution blocks.
+    ///
+    /// Mirrors the filter in `TerminalView::last_completed_command_text`
+    /// (`view/tab_metadata.rs`), minus its `finished()` requirement: a session
+    /// can be named after a command that is still running.
+    fn is_nameable_command(block: &Block) -> bool {
+        if block.is_background() || block.is_static() {
+            return false;
+        }
+        if !(block.bootstrap_stage().is_done() || block.is_restored()) {
+            return false;
+        }
+        let command = block.command_to_string();
+        let command = command.trim();
+        !command.is_empty() && !command.starts_with("cd ")
+    }
+
     /// Expands the pattern configured for this scope into a suggested filename.
     fn capture_filename(&mut self, request: CaptureRequest, ctx: &mut ViewContext<Self>) -> String {
         let settings = TerminalSettings::as_ref(ctx);
@@ -21556,10 +21601,7 @@ impl TerminalView {
         let (first, last) = if request.is_session() {
             let blocks = block_list.blocks();
             (
-                blocks
-                    .iter()
-                    .find(|b| !b.command_to_string().trim().starts_with("cd "))
-                    .or_else(|| blocks.first()),
+                blocks.iter().find(|b| Self::is_nameable_command(b)).or_else(|| blocks.first()),
                 blocks.last(),
             )
         } else {
@@ -21712,12 +21754,28 @@ impl TerminalView {
             .unwrap_or_default()
     }
 
+    /// Entry point for the tab right-click menu.
+    ///
+    /// `TerminalView` cannot reach its own `PaneGroup`, so the tab name is
+    /// passed down from the workspace layer rather than looked up here.
+    pub fn capture_session_to_file(
+        &mut self,
+        session_name: Option<String>,
+        keep_open: bool,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        self.pending_capture_session_name = session_name;
+        self.capture_to_file(CaptureRequest::session(keep_open), ctx);
+    }
+
     /// The tab's name when the user set one, otherwise `None`.
     ///
     /// Auto-generated names come from the working directory, which makes a poor
     /// filename, so `{session-or-command}` falls back to the first command.
+    /// Only populated when the capture was started from the tab menu, which is
+    /// the one place with a `PaneGroup` in scope.
     fn session_name(&self, _ctx: &AppContext) -> Option<String> {
-        None
+        self.pending_capture_session_name.clone()
     }
 
     /// Confirmation toast with an "Open" link, mirroring [`PtyRecorder`].
@@ -21741,13 +21799,35 @@ impl TerminalView {
     fn finish_capture(
         &mut self,
         path: PathBuf,
-        contents: String,
         request: CaptureRequest,
-        tail_block_index: Option<BlockIndex>,
         ctx: &mut ViewContext<Self>,
     ) {
-        // A streaming request with nothing left running is just a save. This is
-        // also the path taken when the command ended while the dialog was open.
+        let entity = match request.scope {
+            CaptureScope::BlockOutput => BlockEntity::OutputUnobfuscated,
+            CaptureScope::BlockFull | CaptureScope::Session => {
+                BlockEntity::CommandAndOutputUnobfuscated
+            }
+        };
+
+        // Contents and tail are read here, together, so they describe the same
+        // instant. See the note in `capture_to_file`.
+        //
+        // The keybindings carry no selection predicate so they work right after a
+        // command finishes; with nothing selected they target the last block.
+        let contents = if request.is_session() {
+            self.session_contents_as_string(entity, file_capture::BLOCK_SEPARATOR, ctx)
+        } else if self.selected_blocks.is_empty() {
+            let active_index = self.model.lock().block_list().active_block_index();
+            self.rendered_block_text(active_index, request, ctx)
+        } else {
+            self.selected_block_contents_as_string(entity, file_capture::BLOCK_SEPARATOR, ctx)
+        };
+
+        let tail_block_index = self.streaming_target_block_index(request, ctx);
+
+        // A block stream with nothing running is just a save -- including when
+        // the command ended while the dialog was open. A session stream always
+        // has a tail, because it follows the block list rather than a command.
         let tail = request.keep_open.then_some(tail_block_index).flatten();
 
         let Some(tail_index) = tail else {

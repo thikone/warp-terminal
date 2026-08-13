@@ -2586,12 +2586,13 @@ fn test_tab_context_menu_share_session_items() {
         workspace.read(&app, |workspace, ctx| {
             let items =
                 workspace.tabs[1].menu_items(1, 3, &workspace.tab_groups, false, true, true, ctx);
-            assert!(
-                items[0].is_approximately_same_item_as(
+            // "Share session" is gone in this fork -- the tab menu offers file
+            // capture instead -- so "Stop sharing all" is now first.
+            assert!(items.iter().all(|item| !item
+                .is_approximately_same_item_as(
                     &MenuItemFields::new("Share session").into_item()
-                )
-            );
-            assert!(items[1].is_approximately_same_item_as(
+                )));
+            assert!(items[0].is_approximately_same_item_as(
                 &MenuItemFields::new("Stop sharing all").into_item()
             ));
         });
@@ -2602,16 +2603,19 @@ fn test_tab_context_menu_share_session_items() {
             workspace.stop_sharing_all_panes_in_tab(&tab, ctx);
         });
 
-        // When there's no shared sessions in a tab, the only option is "Share session".
+        // With no shared sessions the sharing section is empty in this fork,
+        // because "Share session" was replaced by the file-capture items.
         workspace.read(&app, |workspace, ctx| {
             let items =
                 workspace.tabs[1].menu_items(1, 3, &workspace.tab_groups, false, true, true, ctx);
-            assert!(
-                items[0].is_approximately_same_item_as(
+            assert!(items.iter().all(|item| !item
+                .is_approximately_same_item_as(
                     &MenuItemFields::new("Share session").into_item()
-                )
-            );
-            assert!(items[1].is_approximately_same_item_as(&MenuItem::Separator));
+                )));
+            // Streaming can always be armed, even on a session with no output.
+            assert!(items.iter().any(|item| item.is_approximately_same_item_as(
+                &MenuItemFields::new("Stream session to file...").into_item()
+            )));
         });
     });
 }
