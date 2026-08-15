@@ -206,18 +206,23 @@ The one feature this fork *adds*. It replaces `Share block...` and `Share sessio
 which uploaded to Warp's cloud and are therefore dead here, with six commands that
 write the same content to a local file.
 
-| Command | Writes | Keybinding |
-|---|---|---|
-| Save output to file... | The block's output, as rendered | `Ctrl+Shift+S` |
-| Stream output to file... | The same, then keeps appending while the command runs | `Ctrl+Alt+Shift+S` |
-| Save block to file... | Command line and output | |
-| Stream block to file... | The same, live (only offered while a command is running) | |
-| Save session to file... | Every block in the session | |
-| Stream session to file... | The same, then follows the session across block boundaries | |
+| Command | Binding name | Writes | Keybinding |
+|---|---|---|---|
+| Save output to file... | Save Output | The block's output, as rendered | `Ctrl+Shift+S` |
+| Stream output to file... | Stream Output | The same, then keeps appending while the command runs | `Ctrl+Alt+Shift+S` |
+| Save block to file... | Save Block | Command line and output | unbound |
+| Stream block to file... | Stream Block | The same, live (only offered while a command is running) | unbound |
+| Save session to file... | Save Session | Every block in the session | unbound |
+| Stream session to file... | Stream Session | The same, then follows the session across block boundaries | unbound |
 
 The two keybindings act on the selected block(s) if there is a selection, otherwise on
 the last block. `Stream` degrades to `Save` when nothing is running. With more than one
 block selected the labels pluralise and the session commands are hidden.
+
+All six are registered as editable bindings, so they appear in the **Terminal** section
+of the Resource Center's keyboard shortcuts panel and in **Settings → Keyboard
+Shortcuts**, where the four unbound ones can be given a key. No default chords were
+invented for them — the modifier space around `Ctrl+Shift+S` is already crowded.
 
 **New:** `app/src/terminal/file_capture.rs` — scopes, filename-pattern expansion and
 `FileStream`, which appends when the rendered text still starts with what it last wrote
@@ -239,6 +244,13 @@ place). `app/src/terminal/file_capture_tests.rs` covers it with 13 tests.
 - `app/src/terminal/settings.rs` — three `String` settings, `SyncToCloud::Never`.
 - `app/src/settings_view/features_page.rs` — those three settings under
   **Settings → Features → Session**, one text field each.
+- `app/src/terminal/view/init.rs` — all six registered as editable bindings, named
+  `terminal:{save,stream}_{output,block,session}_to_file`.
+- `app/src/resource_center/utils.rs` — the six names added to `TERMINAL_KEYBINDINGS`
+  so they land in the panel's Terminal section instead of Fundamentals.
+- `app/src/resource_center/keybindings_page.rs` — `build_bindings` dropped every
+  binding without a trigger, which would have hidden the four unbound captures. It now
+  keeps those six by name.
 
 ### Filename patterns
 

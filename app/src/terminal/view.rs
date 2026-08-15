@@ -26906,7 +26906,8 @@ impl TypedActionView for TerminalView {
             }
             // Nothing to announce at dispatch: these open a save dialog, and the
             // confirmation toast reports the result once the file is written.
-            SaveOutputToFile | StreamOutputToFile => Empty,
+            SaveOutputToFile | StreamOutputToFile | SaveBlockToFile | StreamBlockToFile
+            | SaveSessionToFile | StreamSessionToFile => Empty,
             SelectAllBlocks => Custom(AccessibilityContent::new_without_help(
                 format!(
                     "Selected all {} blocks.",
@@ -27327,6 +27328,10 @@ impl TypedActionView for TerminalView {
             CopyOutputs => self.copy_outputs(ctx),
             SaveOutputToFile => self.capture_to_file(CaptureRequest::block_output(false), ctx),
             StreamOutputToFile => self.capture_to_file(CaptureRequest::block_output(true), ctx),
+            SaveBlockToFile => self.capture_to_file(CaptureRequest::block_full(false), ctx),
+            StreamBlockToFile => self.capture_to_file(CaptureRequest::block_full(true), ctx),
+            SaveSessionToFile => self.capture_to_file(CaptureRequest::session(false), ctx),
+            StreamSessionToFile => self.capture_to_file(CaptureRequest::session(true), ctx),
             CopyCommands => self.copy_commands(ctx),
             CopyGitBranch => {
                 let prompt_position = match self.selected_blocks.tail() {
