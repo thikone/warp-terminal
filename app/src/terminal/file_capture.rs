@@ -175,10 +175,7 @@ pub fn expand_pattern(pattern: &str, tokens: &PatternTokens) -> String {
         .replace("{command}", &sanitize_token(command))
         .replace("{timestamp}", &timestamp)
         .replace("{finished-timestamp}", &finished)
-        .replace(
-            "{session-or-command}",
-            &sanitize_token(session_or_command),
-        )
+        .replace("{session-or-command}", &sanitize_token(session_or_command))
 }
 
 /// A capture file, optionally still being appended to.

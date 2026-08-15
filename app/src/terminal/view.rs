@@ -404,6 +404,7 @@ use crate::terminal::command_corrections_denylist::COMMAND_CORRECTIONS_PREFERRED
 use crate::terminal::event::{
     AfterBlockCompletedEvent, BlockType, RemoteServerSetupState, TerminalMode, UserBlockCompleted,
 };
+use crate::terminal::file_capture::{self, CaptureRequest, CaptureScope};
 use crate::terminal::find::{BlockGridMatch, BlockListMatch, TerminalFindModel};
 use crate::terminal::general_settings::GeneralSettings;
 use crate::terminal::grid_size_util::grid_cell_dimensions;
@@ -450,7 +451,6 @@ use crate::terminal::model::terminal_model::{
 };
 use crate::terminal::model::{ObfuscateSecrets, RespectObfuscatedSecrets, SecretHandle};
 use crate::terminal::model_events::{AnsiHandlerEvent, ModelEvent, ModelEventDispatcher};
-use crate::terminal::file_capture::{self, CaptureRequest, CaptureScope};
 use crate::terminal::recorder::PtyRecorder;
 use crate::terminal::safe_mode_settings::get_secret_obfuscation_mode;
 use crate::terminal::session_settings::{
@@ -16948,7 +16948,6 @@ impl TerminalView {
                     );
                 }
 
-
                 if WarpDriveSettings::is_warp_drive_enabled(ctx) {
                     items.push(MenuItem::Separator);
                     items.push(
@@ -21605,7 +21604,10 @@ impl TerminalView {
         let (first, last) = if request.is_session() {
             let blocks = block_list.blocks();
             (
-                blocks.iter().find(|b| Self::is_nameable_command(b)).or_else(|| blocks.first()),
+                blocks
+                    .iter()
+                    .find(|b| Self::is_nameable_command(b))
+                    .or_else(|| blocks.first()),
                 blocks.last(),
             )
         } else {
@@ -21614,24 +21616,27 @@ impl TerminalView {
                 let block = block_list.block_at(active);
                 (block, block)
             } else {
-            let mut indices: Vec<_> = self
-                .selected_blocks
-                .sorted_ranges(sort_direction)
-                .into_iter()
-                .flat_map(|range| range.range(None))
-                .collect();
-            indices.sort_unstable();
-            (
-                indices.first().and_then(|i| block_list.block_at(*i)),
-                indices.last().and_then(|i| block_list.block_at(*i)),
-            )
+                let mut indices: Vec<_> = self
+                    .selected_blocks
+                    .sorted_ranges(sort_direction)
+                    .into_iter()
+                    .flat_map(|range| range.range(None))
+                    .collect();
+                indices.sort_unstable();
+                (
+                    indices.first().and_then(|i| block_list.block_at(*i)),
+                    indices.last().and_then(|i| block_list.block_at(*i)),
+                )
             }
         };
 
         let tokens = file_capture::PatternTokens {
             command: first.map(|b| b.command_to_string()),
             finished: last.and_then(|b| b.completed_ts().copied()),
-            session_name: request.is_session().then(|| self.session_name(ctx)).flatten(),
+            session_name: request
+                .is_session()
+                .then(|| self.session_name(ctx))
+                .flatten(),
         };
         drop(model);
 
@@ -21678,7 +21683,8 @@ impl TerminalView {
             .as_ref()
             .is_some_and(|stream| BlockIndex::from(stream.block_index()) == completed_index)
         {
-            let rendered = self.rendered_block_text(completed_index, CaptureRequest::block_full(true), ctx);
+            let rendered =
+                self.rendered_block_text(completed_index, CaptureRequest::block_full(true), ctx);
             if let Some(stream) = self.block_capture_stream.as_mut() {
                 let _ = stream.update_tail(&rendered);
             }
@@ -21700,9 +21706,7 @@ impl TerminalView {
                 && let Err(err) =
                     stream.advance_to(&rendered, next_index, file_capture::BLOCK_SEPARATOR)
             {
-                report_error!(
-                    anyhow::Error::new(err).context("Failed to advance session capture")
-                );
+                report_error!(anyhow::Error::new(err).context("Failed to advance session capture"));
                 self.session_capture_stream = None;
             }
         }
@@ -21727,10 +21731,7 @@ impl TerminalView {
     }
 
     #[cfg(feature = "local_fs")]
-    fn capture_stream_slot(
-        &mut self,
-        is_session: bool,
-    ) -> &mut Option<file_capture::FileStream> {
+    fn capture_stream_slot(&mut self, is_session: bool) -> &mut Option<file_capture::FileStream> {
         if is_session {
             &mut self.session_capture_stream
         } else {

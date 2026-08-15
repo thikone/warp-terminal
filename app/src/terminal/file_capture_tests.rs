@@ -113,8 +113,8 @@ fn update_tail_rewrites_when_the_block_redraws() {
     let dir = TempDir::new().unwrap();
     let path = dir.path().join("capture.log");
 
-    let mut stream = FileStream::create(&path, "[..........]", Some((0, "[..........]".to_owned())))
-        .unwrap();
+    let mut stream =
+        FileStream::create(&path, "[..........]", Some((0, "[..........]".to_owned()))).unwrap();
     stream.update_tail("[#####.....]").unwrap();
     stream.update_tail("[##########]").unwrap();
 
