@@ -3,7 +3,9 @@
 A fork of [warpdotdev/warp](https://github.com/warpdotdev/warp) stripped down to **just the terminal**.
 
 Auto-update is gone, the AI/agent surfaces are gone, telemetry never runs, and all
-user state lives next to the binary so the build is genuinely portable.
+user state lives next to the binary so the build is genuinely portable. The one thing
+it adds is [saving and streaming output to files](#11-save-and-stream-output-to-files),
+in place of the cloud sharing it removed.
 
 Upstream licensing is unchanged: `warpui_core` and `warpui` are MIT
 ([LICENSE-MIT](LICENSE-MIT)); everything else is AGPL v3 ([LICENSE-AGPL](LICENSE-AGPL)).
@@ -22,6 +24,7 @@ Upstream licensing is unchanged: `warpui_core` and `warpui` are MIT
 | Shell bootstrap | Works even when the bootstrap script is unsigned or carries Mark-of-the-Web |
 | Storage | Portable — everything beside the binary in `data\` |
 | Version | Tagged `…​.terminal_NN` instead of `…​.stable_NN` |
+| File capture | Cloud "Share block/session" replaced by six commands that save or live-stream output to a local file |
 
 Only the **`warp-oss`** binary is buildable from this tree. The `stable`, `preview`,
 `dev` and `local` binaries call `warp_channel_config::load_config!`, which shells out
@@ -197,7 +200,65 @@ channel segment is capture group 3 of the parser's regex in
 `app/src/themes/default_themes.rs` — `dark_theme()` background restored to
 `0x000000FF`. Upstream changed it to `0x050505FF`, which looks washed out on OLED.
 
-## 11. Housekeeping
+## 11. Save and stream output to files
+
+The one feature this fork *adds*. It replaces `Share block...` and `Share session...`,
+which uploaded to Warp's cloud and are therefore dead here, with six commands that
+write the same content to a local file.
+
+| Command | Writes | Keybinding |
+|---|---|---|
+| Save output to file... | The block's output, as rendered | `Ctrl+Shift+S` |
+| Stream output to file... | The same, then keeps appending while the command runs | `Ctrl+Alt+Shift+S` |
+| Save block to file... | Command line and output | |
+| Stream block to file... | The same, live (only offered while a command is running) | |
+| Save session to file... | Every block in the session | |
+| Stream session to file... | The same, then follows the session across block boundaries | |
+
+The two keybindings act on the selected block(s) if there is a selection, otherwise on
+the last block. `Stream` degrades to `Save` when nothing is running. With more than one
+block selected the labels pluralise and the session commands are hidden.
+
+**New:** `app/src/terminal/file_capture.rs` — scopes, filename-pattern expansion and
+`FileStream`, which appends when the rendered text still starts with what it last wrote
+and rewrites from the recorded offset when it does not (a block's tail can be redrawn in
+place). `app/src/terminal/file_capture_tests.rs` covers it with 13 tests.
+
+**Changed:**
+
+- `app/src/terminal/view.rs` — the six actions, the wakeup tick that pumps live streams,
+  and `session_capture_context_menu_items`, one builder shared by all four menus that
+  used to offer session sharing (block right-click, the block "..." button, the
+  input-area right-click and the empty-session menu).
+- `app/src/terminal/model/block.rs` — `command_and_output_with_secrets_unobfuscated()`
+  and `command_line_with_pwd()`, which prefixes the command with the directory it ran
+  in, prompt-style, using each block's own recorded pwd and shell type.
+- `app/src/tab.rs` and `app/src/workspace/view.rs` — the same two session commands on the
+  tab right-click menu, resolving the tab by index so saving another tab's session does
+  not steal focus.
+- `app/src/terminal/settings.rs` — three `String` settings, `SyncToCloud::Never`.
+- `app/src/settings_view/features_page.rs` — those three settings under
+  **Settings → Features → Session**, one text field each.
+
+### Filename patterns
+
+| toml key | Default |
+|---|---|
+| `terminal.file_capture.output_pattern` | `{command}_{timestamp}.log` |
+| `terminal.file_capture.block_pattern` | `{command}_{timestamp}.log` |
+| `terminal.file_capture.session_pattern` | `{session-or-command}_{timestamp}.log` |
+
+Tokens: `{command}` (first block's command), `{timestamp}` (now),
+`{finished-timestamp}` (last block's finish time), `{session-or-command}` (the tab name
+if you renamed it, otherwise the first command). Values are sanitised for the
+filesystem, and the expansion only seeds the save dialog — the final name is yours.
+Clearing a field in the settings page restores its default.
+
+> **Captured files contain secrets in plaintext.** The terminal masks them on screen;
+> these files do not. That is deliberate — the point is a faithful transcript — but
+> treat the output as sensitive.
+
+## 12. Housekeeping
 
 Compiler warnings introduced by the removals were cleaned up: unused imports and
 variables removed, five dead constants deleted, and genuinely unreachable code
