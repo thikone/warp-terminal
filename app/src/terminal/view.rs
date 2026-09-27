@@ -374,8 +374,8 @@ use crate::terminal::alt_screen::alt_screen_element::AltScreenElement;
 use crate::terminal::alt_screen::should_intercept_scroll;
 use crate::terminal::alt_screen_reporting::{AltScreenReporting, AltScreenReportingChangedEvent};
 use crate::terminal::block_filter::{
-    BlockFilterEditor, BlockFilterEditorEvent, BlockFilterQuery, OpenedFromClick,
-    filter_button_position_id,
+    BlockFilterEditor, BlockFilterEditorEvent, BlockFilterQuery, DEFAULT_CONTEXT_LINES_VALUE,
+    OpenedFromClick, filter_button_position_id,
 };
 use crate::terminal::block_list_element::{
     BlockListElement, BlockListMenuSource, BlockListMouseStates, BlockSelectAction,
@@ -501,7 +501,7 @@ use crate::terminal::{
     AudibleBell, BlockListSettings, BlockListSettingsChangedEvent, CellSizeAndWindowPadding,
     History, HistoryEntry, ShellHost, ShellLaunchData, SizeInfo, SizeUpdate, SizeUpdateReason,
     color, element_size_at_last_frame, height_in_range_approx, heights_approx_eq,
-    heights_approx_gt, heights_approx_gte, prompt,
+    heights_approx_gt, heights_approx_gte, prompt, session_history,
 };
 use crate::terminal::{
     TerminalModel,
@@ -2150,6 +2150,9 @@ impl ContextMenuType {
                 // We may be able to get the point from the row/col
                 BlockListMenuSource::BlockOverflowButton { .. } => None,
                 BlockListMenuSource::BlockKeybinding { .. } => None,
+                // Anchored to the panel row's saved position, not to a point in
+                // this view.
+                BlockListMenuSource::SessionHistoryRow { .. } => None,
                 BlockListMenuSource::RegularTextRightClick {
                     position_in_terminal_view,
                 } => Some(*position_in_terminal_view),
@@ -16782,6 +16785,7 @@ impl TerminalView {
             (
                 BlockListMenuSource::BlockOverflowButton { .. }
                 | BlockListMenuSource::BlockKeybinding { .. }
+                | BlockListMenuSource::SessionHistoryRow { .. }
                 | BlockListMenuSource::RegularBlockRightClick { .. }
                 | BlockListMenuSource::RichContentBlockRightClick { .. }
                 | BlockListMenuSource::OutsideBlockRightClick { .. },
@@ -17884,6 +17888,7 @@ impl TerminalView {
     ) {
         match menu_source {
             BlockListMenuSource::BlockOverflowButton { block_index }
+            | BlockListMenuSource::SessionHistoryRow { block_index, .. }
             | BlockListMenuSource::RegularBlockRightClick { block_index, .. } => {
                 if !self.selected_blocks.is_selected(*block_index) {
                     // If the context menu is already open, we just want to close
@@ -21570,16 +21575,172 @@ impl TerminalView {
     /// Mirrors the filter in `TerminalView::last_completed_command_text`
     /// (`view/tab_metadata.rs`), minus its `finished()` requirement: a session
     /// can be named after a command that is still running.
+    /// Shares its base with the session history list, which wants the same
+    /// blocks minus the `cd` exclusion -- a `cd` is legitimate history, but
+    /// makes for a poor file name.
     fn is_nameable_command(block: &Block) -> bool {
-        if block.is_background() || block.is_static() {
-            return false;
+        session_history::is_session_history_command(block)
+            && !block.command_to_string().trim().starts_with("cd ")
+    }
+
+    /// Snapshot of the session's commands for the tool panel's Session history
+    /// tab. Taken under one lock and handed over as owned data so the panel does
+    /// not hold the terminal model across a render pass.
+    ///
+    /// Output sizes are deliberately absent: they require materializing each
+    /// block's text, so the panel pulls them separately and caches them by
+    /// [`BlockId`]. See [`Self::block_output_size`].
+    pub fn session_history_entries(&self) -> Vec<session_history::SessionHistoryEntry> {
+        let model = self.model.lock();
+        model
+            .block_list()
+            .blocks()
+            .iter()
+            .enumerate()
+            .filter(|(_, block)| session_history::is_session_history_command(block))
+            .map(|(index, block)| session_history::SessionHistoryEntry {
+                block_index: BlockIndex(index),
+                block_id: block.id().clone(),
+                command: block.command_to_string().trim().to_string(),
+                pwd: block.user_friendly_pwd().map(|pwd| pwd.into_owned()),
+                started_at: block.start_ts().copied(),
+                completed_at: block.completed_ts().copied(),
+                is_running: block.is_executing(),
+                has_failed: block.has_failed(),
+            })
+            .collect()
+    }
+
+    /// Line and byte counts for one block's output.
+    ///
+    /// Materializes the block's text, so callers must cache the result rather
+    /// than calling this per render. Uses the same extraction as a capture to
+    /// file, so the reported size matches what saving the block would produce.
+    pub fn block_output_size(
+        &self,
+        block_index: BlockIndex,
+    ) -> Option<session_history::OutputSize> {
+        let model = self.model.lock();
+        let block = model.block_list().block_at(block_index)?;
+        Some(session_history::OutputSize::of(
+            &block.output_with_secrets_unobfuscated(),
+        ))
+    }
+
+    /// A block's output text, for counting filter matches in the Session history
+    /// list. Same extraction as [`Self::block_output_size`].
+    pub fn block_output_text(&self, block_index: BlockIndex) -> Option<String> {
+        let model = self.model.lock();
+        let block = model.block_list().block_at(block_index)?;
+        Some(block.output_with_secrets_unobfuscated())
+    }
+
+    /// Applies the Session history filter query to one block's output.
+    ///
+    /// `show_editor` opens the block filter toolbar pre-filled. When the panel
+    /// has both on-select toggles enabled it passes `false`, so the filter takes
+    /// effect but the find bar is the only surface that appears.
+    pub fn filter_block_from_session_history(
+        &mut self,
+        block_index: BlockIndex,
+        query: &str,
+        regex_enabled: bool,
+        case_sensitivity_enabled: bool,
+        show_editor: bool,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        let filter_query = BlockFilterQuery {
+            query: query.to_string(),
+            num_context_lines: DEFAULT_CONTEXT_LINES_VALUE,
+            regex_enabled,
+            case_sensitivity_enabled,
+            invert_filter_enabled: false,
+            is_active: true,
+        };
+        self.model
+            .lock()
+            .update_filter_on_block(block_index, filter_query);
+
+        if show_editor {
+            self.open_block_filter_editor(block_index, OpenedFromClick::No, ctx);
         }
-        if !(block.bootstrap_stage().is_done() || block.is_restored()) {
-            return false;
+        ctx.notify();
+    }
+
+    /// Opens the find bar scoped to one block, seeded with the Session history
+    /// query and its regex/case options.
+    pub fn find_in_block_from_session_history(
+        &mut self,
+        block_index: BlockIndex,
+        query: &str,
+        regex_enabled: bool,
+        case_sensitivity_enabled: bool,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        self.find_bar.update(ctx, |view, ctx| {
+            view.set_query_text(query, ctx);
+            view.regex_search_enabled = regex_enabled;
+            view.case_sensitivity_enabled = case_sensitivity_enabled;
+            view.display_find_within_block = FindWithinBlockState::Enabled;
+            ctx.notify();
+        });
+        self.find_model.update(ctx, |find_model, _ctx| {
+            find_model.set_is_find_bar_open(true);
+        });
+
+        let options = FindOptions::default()
+            .with_query(Some(query.to_string()))
+            .with_is_regex_enabled(regex_enabled)
+            .with_is_case_sensitive(case_sensitivity_enabled)
+            .with_blocks_to_include_in_results(Some([block_index]));
+        self.run_find(options, ctx);
+        self.focus_find_bar(ctx);
+    }
+
+    /// Right-click on a Session history row: reveal the block, then show its
+    /// own context menu anchored beside the row that was clicked.
+    pub fn open_session_history_context_menu(
+        &mut self,
+        block_index: BlockIndex,
+        position_in_row: Vector2F,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        self.reveal_block_from_session_history(block_index, ctx);
+        let menu_source = BlockListMenuSource::SessionHistoryRow {
+            block_index,
+            position_in_row,
+        };
+        let items = self.context_menu_items(&menu_source, ctx);
+        self.show_context_menu(
+            ContextMenuState {
+                menu_type: ContextMenuType::BlockList { menu_source },
+            },
+            items,
+            ctx,
+        );
+    }
+
+    /// Selects a block and scrolls it into view. Entry point for a left-click on
+    /// a Session history row.
+    ///
+    /// The selection is not cosmetic: the block menu's items, and the
+    /// keybindings that mirror them, all act on the current selection.
+    pub fn reveal_block_from_session_history(
+        &mut self,
+        block_index: BlockIndex,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        if self
+            .model
+            .lock()
+            .block_list()
+            .block_at(block_index)
+            .is_none()
+        {
+            return;
         }
-        let command = block.command_to_string();
-        let command = command.trim();
-        !command.is_empty() && !command.starts_with("cd ")
+        self.reset_selection_to_single_block(block_index, ctx);
+        self.scroll_to_if_not_visible(block_index, ctx);
     }
 
     /// Expands the pattern configured for this scope into a suggested filename.
@@ -28566,6 +28727,23 @@ impl View for TerminalView {
                             ChildAnchor::TopRight,
                         ),
                     ),
+
+                // The anchor element belongs to the tool panel, not to this
+                // view. Save positions are window-scoped, so the lookup crosses
+                // views and the menu lands beside the clicked row.
+                BlockListMenuSource::SessionHistoryRow {
+                    block_index,
+                    position_in_row,
+                } => stack.add_positioned_overlay_child(
+                    ChildView::new(&self.context_menu).finish(),
+                    OffsetPositioning::offset_from_save_position_element(
+                        session_history::session_history_row_position_id(*block_index).as_str(),
+                        *position_in_row,
+                        PositionedElementOffsetBounds::WindowByPosition,
+                        PositionedElementAnchor::TopLeft,
+                        ChildAnchor::TopLeft,
+                    ),
+                ),
 
                 BlockListMenuSource::RegularBlockRightClick {
                     position_in_terminal_view,

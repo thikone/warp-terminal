@@ -722,6 +722,8 @@ pub enum WorkspaceAction {
     ToggleGlobalSearch,
     ToggleHiddenFiles,
     OpenGlobalSearch,
+    /// Toggles directly to the Session history tab of the left panel.
+    ToggleSessionHistory,
     ToggleConversationListView,
     OpenConversationListView,
     OpenAgentManagementView,
@@ -1185,6 +1187,7 @@ impl WorkspaceAction {
             | ToggleGlobalSearch
             | ToggleHiddenFiles
             | OpenGlobalSearch
+            | ToggleSessionHistory
             | ToggleConversationListView
             | OpenConversationListView
             | ToggleNotificationMailbox { .. }

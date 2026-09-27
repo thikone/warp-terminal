@@ -71,6 +71,7 @@ pub mod resizable_data;
 pub mod rich_history;
 pub mod safe_mode_settings;
 mod secret_regex_updater;
+pub mod session_history;
 pub mod session_settings;
 pub mod settings;
 mod share_block_modal;

@@ -312,7 +312,11 @@ pub enum CodeReviewPaneSnapshot {
 pub enum LeftPanelDisplayedTab {
     FileTree,
     GlobalSearch,
+    SessionHistory,
+    /// No longer reachable: the tab was removed. Kept so state persisted before
+    /// the removal still deserializes instead of dropping the whole record.
     WarpDrive,
+    /// See [`LeftPanelDisplayedTab::WarpDrive`].
     ConversationListView,
 }
 
@@ -320,6 +324,7 @@ impl From<ToolPanelView> for LeftPanelDisplayedTab {
     fn from(view: ToolPanelView) -> Self {
         match view {
             ToolPanelView::ProjectExplorer => LeftPanelDisplayedTab::FileTree,
+            ToolPanelView::SessionHistory => LeftPanelDisplayedTab::SessionHistory,
             ToolPanelView::GlobalSearch { .. } => LeftPanelDisplayedTab::GlobalSearch,
             ToolPanelView::WarpDrive => LeftPanelDisplayedTab::WarpDrive,
             ToolPanelView::ConversationListView => LeftPanelDisplayedTab::ConversationListView,

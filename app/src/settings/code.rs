@@ -54,6 +54,19 @@ define_settings_group!(CodeSettings, settings: [
         toml_path: "code.editor.show_project_explorer",
         description: "Whether the project explorer is shown in the tools panel.",
     },
+    // Controls whether the session history tab appears in the tools panel.
+    // Machine-local: the history it lists is the live block list of the
+    // session on this machine, so syncing the preference is meaningless.
+    show_session_history: ShowSessionHistory {
+        type: bool,
+        default: true,
+        supported_platforms: SupportedPlatforms::ALL,
+        sync_to_cloud: SyncToCloud::Never,
+        surface: settings::SettingSurfaces::GUI,
+        private: false,
+        toml_path: "code.editor.show_session_history",
+        description: "Whether the session history is shown in the tools panel.",
+    },
     // Controls whether global file search appears in the tools panel.
     show_global_search: ShowGlobalSearch {
         type: bool,

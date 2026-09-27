@@ -25,6 +25,7 @@ Upstream licensing is unchanged: `warpui_core` and `warpui` are MIT
 | Storage | Portable — everything beside the binary in `data\` |
 | Version | Tagged `…​.terminal_NN` instead of `…​.stable_NN` |
 | File capture | Cloud "Share block/session" replaced by six commands that save or live-stream output to a local file |
+| Tool panel | Agent conversations and Warp Drive tabs removed; a Session history tab added in their place |
 
 Only the **`warp-oss`** binary is buildable from this tree. The `stable`, `preview`,
 `dev` and `local` binaries call `warp_channel_config::load_config!`, which shells out
@@ -270,7 +271,81 @@ Clearing a field in the settings page restores its default.
 > these files do not. That is deliberate — the point is a faithful transcript — but
 > treat the output as sensitive.
 
-## 12. Housekeeping
+## 12. Tool panel: Session history
+
+The tool panel (left panel) had four tabs. The two cloud/AI ones are gone and a
+new one takes their place:
+
+| Tab | Shortcut | Status |
+|---|---|---|
+| Project explorer | `Alt+1` | unchanged |
+| **Session history** | `Alt+2` | **new** |
+| Global search | `Alt+3` | unchanged |
+| ~~Agent conversations~~ | ~~`Alt+2`~~ | removed |
+| ~~Warp Drive~~ | ~~`Alt+4`~~ | removed |
+
+Session history lists the commands run in the active session — command,
+working directory, how long it took, and how much output it produced:
+
+```
+● cargo build --release
+  ~/projects/app · 1m 04s · 612 lines · 38.6 KB
+● cargo test
+  ~/projects/app · 22.1s · 88 lines · 4.2 KB
+```
+
+Failed commands get the same treatment the block list gives a failed block: a
+red left stripe over a 10% wash. Running commands appear immediately with a
+ticking duration and growing size. Rows are in terminal order, oldest first.
+
+**Left-click** a row to select that block and scroll to it. **Right-click** for
+the block's own context menu — the same one its `...` button opens — positioned
+beside the row.
+
+### Filtering
+
+A filter box with seven toggles. Three choose what the query matches — command,
+working directory, output — independently; command and directory start on,
+output starts off because it is the only one that has to read every block's
+text. With output matching on, rows show a match count. Two more toggles switch
+the query to a regular expression and to case-sensitive, mirroring the block
+filter toolbar.
+
+The last two decide what happens when you select a row:
+
+| filter-on-select | find-on-select | behaviour |
+|---|---|---|
+| off | off | scroll to the block only |
+| on | off | open the block filter toolbar, pre-filled |
+| off | on | open the find bar, scoped to that block |
+| on | on | apply the filter silently, and open the find bar |
+
+### Where the code lives
+
+**New:** `app/src/terminal/session_history.rs` (the row snapshot type, output
+size measurement, and the duration/byte formatting, with unit tests in
+`session_history_tests.rs`) and `app/src/workspace/view/session_history.rs`
+(the panel itself).
+
+**Changed:**
+
+- `app/src/workspace/view.rs` — `compute_left_panel_views` no longer offers the
+  two removed tabs; restoring a session onto one falls back to Project explorer.
+- `app/src/workspace/view/left_panel.rs` — the `SessionHistory` tab, its
+  toolbelt button (`Icon::History`) and its render/focus wiring.
+- `app/src/terminal/view.rs` — the panel-facing API: `session_history_entries`,
+  `block_output_size`, `reveal_block_from_session_history`, and the filter/find
+  entry points.
+- `app/src/terminal/block_list_element.rs` — a `SessionHistoryRow` menu source
+  carrying a row-relative position, so the block menu can open over the panel.
+- `app/src/settings/code.rs` — `code.editor.show_session_history`.
+
+The `ToolPanelView::WarpDrive` and `::ConversationListView` variants still
+exist, and their panel views are still compiled. They are unreachable: keeping
+them lets tab state persisted before the removal still deserialize instead of
+being discarded.
+
+## 13. Housekeeping
 
 Compiler warnings introduced by the removals were cleaned up: unused imports and
 variables removed, five dead constants deleted, and genuinely unreachable code
@@ -328,6 +403,14 @@ archive, otherwise the exe trips SmartScreen on first run.
 
 ## Known limitations
 
+- **Session history is per-session.** It reads the live block list, so it does not
+  survive a restart, it swaps when you change tab, and blocks trimmed by
+  `terminal.maximum_grid_size` drop out of it. The sqlite `commands` table would
+  persist across restarts but stores no output size, which is one of the columns
+  the tab shows.
+- **Output-scope filtering is the slow one.** Matching against command and directory
+  is free; matching against output has to read every block's text. It is off by
+  default for that reason.
 - **Not zero-footprint.** `app/src/app_services/windows/mod.rs` calls
   `register_uri_handler()` at startup, writing the `warposs://` handler to
   `HKCU\Software\Classes`. Per-user, but outside the portable folder.

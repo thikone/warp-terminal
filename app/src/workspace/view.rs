@@ -15,6 +15,7 @@ pub(crate) mod onboarding;
 pub(crate) mod openwarp_launch_modal;
 pub(crate) mod orchestration_launch_modal;
 pub(crate) mod right_panel;
+mod session_history;
 mod startup_directory;
 mod tab_grouping;
 #[cfg(test)]
@@ -651,6 +652,8 @@ pub(crate) const TOGGLE_TAB_CONFIGS_MENU_BINDING_NAME: &str = "workspace:toggle_
 pub(crate) const LEFT_PANEL_PROJECT_EXPLORER_BINDING_NAME: &str =
     "workspace:left_panel_project_explorer";
 pub(crate) const LEFT_PANEL_GLOBAL_SEARCH_BINDING_NAME: &str = "workspace:left_panel_global_search";
+pub(crate) const LEFT_PANEL_SESSION_HISTORY_BINDING_NAME: &str =
+    "workspace:left_panel_session_history";
 pub(crate) const LEFT_PANEL_WARP_DRIVE_BINDING_NAME: &str = "workspace:left_panel_warp_drive";
 pub(crate) const LEFT_PANEL_AGENT_CONVERSATIONS_BINDING_NAME: &str =
     "workspace:left_panel_agent_conversations";
@@ -3188,6 +3191,7 @@ impl Workspace {
                 event,
                 CodeSettingsChangedEvent::ShowProjectExplorer { .. }
                     | CodeSettingsChangedEvent::ShowGlobalSearch { .. }
+                    | CodeSettingsChangedEvent::ShowSessionHistory { .. }
             ) {
                 me.update_left_panel_available_views(ctx);
                 ctx.notify();
@@ -4197,11 +4201,15 @@ impl Workspace {
             // Restore which panel tab was active
             let active_view = match left_panel_snapshot.left_panel_displayed_tab {
                 LeftPanelDisplayedTab::FileTree => ToolPanelView::ProjectExplorer,
+                LeftPanelDisplayedTab::SessionHistory => ToolPanelView::SessionHistory,
                 LeftPanelDisplayedTab::GlobalSearch => ToolPanelView::GlobalSearch {
                     entry_focus: GlobalSearchEntryFocus::Results,
                 },
-                LeftPanelDisplayedTab::WarpDrive => ToolPanelView::WarpDrive,
-                LeftPanelDisplayedTab::ConversationListView => ToolPanelView::ConversationListView,
+                // Both tabs are gone. Restoring onto one would leave the panel
+                // showing nothing, so fall back to the first available view.
+                LeftPanelDisplayedTab::WarpDrive | LeftPanelDisplayedTab::ConversationListView => {
+                    ToolPanelView::ProjectExplorer
+                }
             };
             lp.restore_active_view_from_snapshot(active_view, ctx);
             lp.set_active_pane_group(pane_group.clone(), &self.working_directories_model, ctx);
@@ -20292,9 +20300,10 @@ impl Workspace {
                         .left_panel_views
                         .first()
                         .copied()
-                        .unwrap_or(ToolPanelView::WarpDrive)
+                        .unwrap_or(ToolPanelView::ProjectExplorer)
                     {
                         ToolPanelView::ProjectExplorer => "Project explorer",
+                        ToolPanelView::SessionHistory => "Session history",
                         ToolPanelView::GlobalSearch { .. } => "Global search",
                         ToolPanelView::WarpDrive => "Warp Drive",
                         ToolPanelView::ConversationListView => "Agent conversations",
@@ -20346,9 +20355,10 @@ impl Workspace {
                 .left_panel_views
                 .first()
                 .copied()
-                .unwrap_or(ToolPanelView::WarpDrive)
+                .unwrap_or(ToolPanelView::ProjectExplorer)
             {
                 ToolPanelView::ProjectExplorer => "Project explorer",
+                ToolPanelView::SessionHistory => "Session history",
                 ToolPanelView::GlobalSearch { .. } => "Global search",
                 ToolPanelView::WarpDrive => "Warp Drive",
                 ToolPanelView::ConversationListView => "Agent conversations",
@@ -23459,16 +23469,17 @@ impl Workspace {
         }
     }
 
-    /// Computes the list of available left panel views based on current AI settings and feature flags.
+    /// Computes the list of available left panel views based on current settings.
+    ///
+    /// The Warp Drive and Agent conversations tabs are removed in this fork; their
+    /// `ToolPanelView` variants survive only so persisted tab state still maps.
     fn compute_left_panel_views(ctx: &AppContext) -> Vec<ToolPanelView> {
         let mut views = vec![];
         if cfg!(feature = "local_fs") && *CodeSettings::as_ref(ctx).show_project_explorer.value() {
             views.push(ToolPanelView::ProjectExplorer);
         }
-        if FeatureFlag::AgentViewConversationListView.is_enabled()
-            && *AISettings::as_ref(ctx).show_conversation_history
-        {
-            views.push(ToolPanelView::ConversationListView);
+        if *CodeSettings::as_ref(ctx).show_session_history.value() {
+            views.push(ToolPanelView::SessionHistory);
         }
         if cfg!(feature = "local_fs")
             && FeatureFlag::GlobalSearch.is_enabled()
@@ -23477,9 +23488,6 @@ impl Workspace {
             views.push(ToolPanelView::GlobalSearch {
                 entry_focus: GlobalSearchEntryFocus::Results,
             });
-        }
-        if *WarpDriveSettings::as_ref(ctx).enable_warp_drive {
-            views.push(ToolPanelView::WarpDrive);
         }
         views
     }
@@ -25800,6 +25808,13 @@ impl TypedActionView for Workspace {
                     );
                 }
             }
+            ToggleSessionHistory => {
+                if *CodeSettings::as_ref(ctx).show_session_history {
+                    let is_showing = self.left_panel_view.as_ref(ctx).active_view()
+                        == ToolPanelView::SessionHistory;
+                    self.toggle_left_panel_view(&LeftPanelAction::SessionHistory, is_showing, ctx);
+                }
+            }
             ToggleHiddenFiles => {
                 CodeSettings::handle(ctx).update(ctx, |settings, ctx| {
                     report_if_error!(settings.show_hidden_files.toggle_and_save_value(ctx));
@@ -26148,6 +26163,9 @@ impl View for Workspace {
         }
         if *CodeSettings::as_ref(app).show_global_search {
             context.set.insert(flags::SHOW_GLOBAL_SEARCH);
+        }
+        if *CodeSettings::as_ref(app).show_session_history {
+            context.set.insert(flags::SHOW_SESSION_HISTORY);
         }
         if *CodeSettings::as_ref(app).show_hidden_files {
             context.set.insert(flags::SHOW_HIDDEN_FILES);

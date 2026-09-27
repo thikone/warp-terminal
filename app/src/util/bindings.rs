@@ -131,6 +131,7 @@ pub enum CustomAction {
     NewAgentTab,
     GoToLine,
     ToggleGlobalSearch,
+    ToggleSessionHistory,
     ToggleConversationListView,
 }
 
@@ -428,13 +429,18 @@ pub fn custom_tag_to_keystroke(custom: CustomTag) -> Option<Keystroke> {
                 Keystroke::parse("alt-3").ok()
             }
         }
-        CustomAction::ToggleConversationListView => {
+        // Inherits the slot the Agent conversations tab used to hold, keeping
+        // the tool panel's tabs on 1/2/3 in order.
+        CustomAction::ToggleSessionHistory => {
             if OperatingSystem::get().is_mac() {
                 Keystroke::parse("ctrl-2").ok()
             } else {
                 Keystroke::parse("alt-2").ok()
             }
         }
+        // The Agent conversations tab is gone, so its shortcut is retired; the
+        // action itself survives only for menu wiring that still references it.
+        CustomAction::ToggleConversationListView => None,
         CustomAction::NewTerminalTab
         | CustomAction::NewFile
         | CustomAction::ShowAboutWarp

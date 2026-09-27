@@ -63,11 +63,13 @@ use crate::workspace::view::conversation_list::view::{
 use crate::workspace::view::global_search::view::{
     Event as GlobalSearchViewEvent, GlobalSearchEntryFocus, GlobalSearchView,
 };
+use crate::workspace::view::session_history::SessionHistoryView;
 use crate::workspace::view::{
     LEFT_PANEL_AGENT_CONVERSATIONS_BINDING_NAME, LEFT_PANEL_GLOBAL_SEARCH_BINDING_NAME,
-    LEFT_PANEL_PROJECT_EXPLORER_BINDING_NAME, LEFT_PANEL_WARP_DRIVE_BINDING_NAME,
-    OPEN_GLOBAL_SEARCH_BINDING_NAME, TOGGLE_CONVERSATION_LIST_VIEW_BINDING_NAME,
-    TOGGLE_PROJECT_EXPLORER_BINDING_NAME, TOGGLE_WARP_DRIVE_BINDING_NAME,
+    LEFT_PANEL_PROJECT_EXPLORER_BINDING_NAME, LEFT_PANEL_SESSION_HISTORY_BINDING_NAME,
+    LEFT_PANEL_WARP_DRIVE_BINDING_NAME, OPEN_GLOBAL_SEARCH_BINDING_NAME,
+    TOGGLE_CONVERSATION_LIST_VIEW_BINDING_NAME, TOGGLE_PROJECT_EXPLORER_BINDING_NAME,
+    TOGGLE_WARP_DRIVE_BINDING_NAME,
 };
 
 #[derive(Default)]
@@ -82,6 +84,7 @@ struct MouseStateHandles {
 #[derive(Clone, Debug)]
 pub enum LeftPanelAction {
     ProjectExplorer,
+    SessionHistory,
     GlobalSearch { entry_focus: GlobalSearchEntryFocus },
     WarpDrive,
     ConversationListView,
@@ -98,9 +101,9 @@ pub(crate) enum ToolPanelAvailability {
 impl ToolPanelView {
     fn availability(self, app: &AppContext) -> ToolPanelAvailability {
         match self {
-            ToolPanelView::ProjectExplorer | ToolPanelView::GlobalSearch { .. } => {
-                ToolPanelAvailability::Available
-            }
+            ToolPanelView::ProjectExplorer
+            | ToolPanelView::SessionHistory
+            | ToolPanelView::GlobalSearch { .. } => ToolPanelAvailability::Available,
             ToolPanelView::WarpDrive => {
                 if WarpDriveSettings::is_warp_drive_available(app) {
                     ToolPanelAvailability::Available
@@ -147,8 +150,14 @@ pub enum LeftPanelEvent {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ToolPanelView {
     ProjectExplorer,
-    GlobalSearch { entry_focus: GlobalSearchEntryFocus },
+    SessionHistory,
+    GlobalSearch {
+        entry_focus: GlobalSearchEntryFocus,
+    },
+    /// Removed from the tab strip in this fork. Retained so persisted tab state
+    /// from before the removal still deserializes and can fall back cleanly.
     WarpDrive,
+    /// See [`ToolPanelView::WarpDrive`].
     ConversationListView,
 }
 
@@ -189,6 +198,16 @@ mod active_view_state {
             left_panel.on_conversation_list_view_visibility_changed(true, ctx);
         }
 
+        // The session history list polls the block list, so it is told when it
+        // stops being visible rather than doing that work unseen.
+        let is_session_history_open = new_view == ToolPanelView::SessionHistory;
+        if (previous == ToolPanelView::SessionHistory) != is_session_history_open {
+            let session_history_view = left_panel.session_history_view.clone();
+            session_history_view.update(ctx, |view, ctx| {
+                view.set_is_active(is_session_history_open, ctx);
+            });
+        }
+
         left_panel.update_active_file_tree_subscription_state(ctx);
     }
 }
@@ -217,6 +236,7 @@ pub struct LeftPanelView {
     close_button_mouse_state: MouseStateHandle,
     warp_drive_view: ViewHandle<DrivePanel>,
     conversation_list_view: ViewHandle<ConversationListView>,
+    session_history_view: ViewHandle<SessionHistoryView>,
     active_view: active_view_state::ActiveViewState,
     toolbelt_buttons: Vec<ToolbeltButtonConfig>,
     active_pane_group: Option<WeakViewHandle<PaneGroup>>,
@@ -268,12 +288,15 @@ impl LeftPanelView {
             ),
             (
                 ToolPanelView::ProjectExplorer
+                | ToolPanelView::SessionHistory
                 | ToolPanelView::GlobalSearch { .. }
                 | ToolPanelView::WarpDrive,
                 ToolPanelAvailability::RequiresAi,
             )
             | (
-                ToolPanelView::ProjectExplorer | ToolPanelView::GlobalSearch { .. },
+                ToolPanelView::ProjectExplorer
+                | ToolPanelView::SessionHistory
+                | ToolPanelView::GlobalSearch { .. },
                 ToolPanelAvailability::RequiresAccount,
             )
             | (_, ToolPanelAvailability::Available) => {
@@ -352,6 +375,7 @@ impl LeftPanelView {
         };
         let warp_drive_view = ctx.add_typed_action_view(DrivePanel::new);
         let conversation_list_view = ctx.add_typed_action_view(ConversationListView::new);
+        let session_history_view = ctx.add_typed_action_view(SessionHistoryView::new);
 
         ctx.subscribe_to_view(&warp_drive_view, |_me, _, event, ctx| {
             ctx.emit(LeftPanelEvent::WarpDrive(event.clone()));
@@ -374,7 +398,10 @@ impl LeftPanelView {
             }
         });
 
-        let active_view = views.first().copied().unwrap_or(ToolPanelView::WarpDrive);
+        let active_view = views
+            .first()
+            .copied()
+            .unwrap_or(ToolPanelView::ProjectExplorer);
         let toolbelt_buttons = views
             .iter()
             .map(|view| Self::create_toolbelt_button_config(view, ctx))
@@ -467,6 +494,7 @@ impl LeftPanelView {
             close_button_mouse_state: Default::default(),
             warp_drive_view,
             conversation_list_view,
+            session_history_view,
             active_view: active_view_state::new(active_view),
             toolbelt_buttons,
             active_pane_group: None,
@@ -475,6 +503,15 @@ impl LeftPanelView {
             panel_position: super::PanelPosition::Left,
         };
         view.update_button_active_states();
+
+        // `active_view_state::new` bypasses `set`, which is what normally tells
+        // the session history list it is visible. Without this the tab would
+        // start empty whenever it is the initially active view.
+        if active_view == ToolPanelView::SessionHistory {
+            view.session_history_view.update(ctx, |history, ctx| {
+                history.set_is_active(true, ctx);
+            });
+        }
 
         view
     }
@@ -572,6 +609,19 @@ impl LeftPanelView {
                     action: LeftPanelAction::GlobalSearch {
                         entry_focus: GlobalSearchEntryFocus::QueryEditor,
                     },
+                    render_with_active_state: false,
+                    tooltip_keybinding: toolbelt_tooltip_keybinding(&tooltip_keybinding_names, ctx),
+                    tooltip_keybinding_names,
+                }
+            }
+            ToolPanelView::SessionHistory => {
+                let tooltip_keybinding_names = vec![LEFT_PANEL_SESSION_HISTORY_BINDING_NAME];
+
+                ToolbeltButtonConfig {
+                    icon: Icon::History,
+                    active_icon: None,
+                    tooltip_text: "Session history".to_string(),
+                    action: LeftPanelAction::SessionHistory,
                     render_with_active_state: false,
                     tooltip_keybinding: toolbelt_tooltip_keybinding(&tooltip_keybinding_names, ctx),
                     tooltip_keybinding_names,
@@ -742,6 +792,12 @@ impl LeftPanelView {
 
         self.active_pane_group = Some(pane_group.downgrade());
 
+        let session_history_view = self.session_history_view.clone();
+        let weak_pane_group = pane_group.downgrade();
+        session_history_view.update(ctx, |view, ctx| {
+            view.set_active_pane_group(Some(weak_pane_group), ctx);
+        });
+
         if let Some(previous_pane_group_id) = previous_pane_group_id
             && previous_pane_group_id != pane_group_id
         {
@@ -862,6 +918,7 @@ impl LeftPanelView {
                     ctx,
                 );
             }
+            ToolPanelView::SessionHistory => ctx.focus(&self.session_history_view),
             ToolPanelView::WarpDrive => {
                 ctx.focus(&self.warp_drive_view);
                 self.warp_drive_view.update(ctx, |view, ctx| {
@@ -1035,6 +1092,9 @@ impl LeftPanelView {
                 LeftPanelAction::GlobalSearch { .. } => {
                     matches!(self.active_view.get(), ToolPanelView::GlobalSearch { .. })
                 }
+                LeftPanelAction::SessionHistory => {
+                    self.active_view.get() == ToolPanelView::SessionHistory
+                }
                 LeftPanelAction::WarpDrive => self.active_view.get() == ToolPanelView::WarpDrive,
                 LeftPanelAction::ConversationListView => {
                     self.active_view.get() == ToolPanelView::ConversationListView
@@ -1157,6 +1217,9 @@ impl LeftPanelView {
                     send_telemetry_from_ctx!(TelemetryEvent::GlobalSearchOpened, ctx);
                 }
             }
+            LeftPanelAction::SessionHistory => {
+                active_view_state::set(self, ToolPanelView::SessionHistory, ctx);
+            }
             LeftPanelAction::WarpDrive => {
                 active_view_state::set(self, ToolPanelView::WarpDrive, ctx);
                 if self.active_view_availability(ctx) == ToolPanelAvailability::Available {
@@ -1194,6 +1257,14 @@ impl LeftPanelView {
     pub fn on_left_panel_visibility_changed(&self, is_now_open: bool, ctx: &mut ViewContext<Self>) {
         if ToolPanelView::ConversationListView == self.active_view.get() {
             self.on_conversation_list_view_visibility_changed(is_now_open, ctx);
+        }
+
+        // Stop the session history list polling the block list while the whole
+        // panel is hidden.
+        if ToolPanelView::SessionHistory == self.active_view.get() {
+            self.session_history_view.update(ctx, |history, ctx| {
+                history.set_is_active(is_now_open, ctx);
+            });
         }
 
         self.update_active_file_tree_subscription_state(ctx);
@@ -1289,6 +1360,7 @@ impl View for LeftPanelView {
                         ctx.focus(&view);
                     }
                 }
+                ToolPanelView::SessionHistory => ctx.focus(&self.session_history_view),
                 ToolPanelView::WarpDrive => ctx.focus(&self.warp_drive_view),
                 ToolPanelView::ConversationListView => ctx.focus(&self.conversation_list_view),
             }
@@ -1357,6 +1429,10 @@ impl View for LeftPanelView {
                     _ => Shrinkable::new(1.0, Container::new(Empty::new().finish()).finish())
                         .finish(),
                 },
+                ToolPanelView::SessionHistory => {
+                    Shrinkable::new(1.0, ChildView::new(&self.session_history_view).finish())
+                        .finish()
+                }
                 ToolPanelView::WarpDrive => Shrinkable::new(
                     1.0,
                     Container::new(ChildView::new(&self.warp_drive_view).finish())

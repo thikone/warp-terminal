@@ -829,6 +829,13 @@ pub enum BlockListMenuSource {
     BlockKeybinding {
         block_index: BlockIndex,
     },
+    /// Right-click on a row in the tool panel's Session history tab. Carries a
+    /// position relative to that row so the menu can open at the cursor, over
+    /// the panel, rather than beside the block in the terminal.
+    SessionHistoryRow {
+        block_index: BlockIndex,
+        position_in_row: Vector2F,
+    },
     RegularBlockRightClick {
         block_index: BlockIndex,
         position_in_terminal_view: Vector2F,
