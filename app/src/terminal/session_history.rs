@@ -31,6 +31,9 @@ pub struct SessionHistoryEntry {
     pub completed_at: Option<DateTime<Local>>,
     pub is_running: bool,
     pub has_failed: bool,
+    /// Only meaningful when [`Self::has_failed`] is set, which is already
+    /// "finished with a non-zero code".
+    pub exit_code: i32,
 }
 
 /// Line and byte counts for a block's output.
@@ -106,6 +109,32 @@ pub fn format_duration(seconds: f64) -> String {
         format!("{hours}h {minutes:02}m")
     } else {
         format!("{minutes}m {secs:02}s")
+    }
+}
+
+/// Above this the hexadecimal form is the one people recognise, so it is shown
+/// alongside the decimal. Compared against the *unsigned* reinterpretation: see
+/// [`format_exit_code_inner`].
+const EXIT_CODE_HEX_THRESHOLD: u32 = 10;
+
+/// `"exit 1"`, or `"exit -1073741819 (0xC0000005)"` on Windows.
+pub fn format_exit_code(code: i32) -> String {
+    format_exit_code_inner(code, cfg!(windows))
+}
+
+/// Split from [`format_exit_code`] so the formatting is testable on any host
+/// rather than only where `cfg!(windows)` happens to hold.
+///
+/// The decimal is the signed value but the threshold and the hex both use the
+/// unsigned reinterpretation: Windows status codes overflow `i32`, so
+/// `0xC0000005` is `-1073741819`. Comparing the signed value would put every
+/// crash code below the threshold and suppress exactly the hex worth showing.
+fn format_exit_code_inner(code: i32, include_hex: bool) -> String {
+    let unsigned = code as u32;
+    if include_hex && unsigned >= EXIT_CODE_HEX_THRESHOLD {
+        format!("exit {code} (0x{unsigned:X})")
+    } else {
+        format!("exit {code}")
     }
 }
 

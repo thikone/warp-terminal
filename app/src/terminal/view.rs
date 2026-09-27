@@ -21630,6 +21630,7 @@ impl TerminalView {
                 completed_at: block.completed_ts().copied(),
                 is_running: block.is_executing(),
                 has_failed: block.has_failed(),
+                exit_code: block.exit_code().value(),
             })
             .collect()
     }
@@ -21728,7 +21729,13 @@ impl TerminalView {
         position_in_row: Vector2F,
         ctx: &mut ViewContext<Self>,
     ) {
-        if self.model.lock().block_list().block_at(block_index).is_none() {
+        if self
+            .model
+            .lock()
+            .block_list()
+            .block_at(block_index)
+            .is_none()
+        {
             return;
         }
         self.scroll_to_if_not_visible(block_index, ctx);

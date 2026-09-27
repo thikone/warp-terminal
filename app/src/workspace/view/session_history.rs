@@ -41,7 +41,7 @@ use crate::terminal::model::BlockId;
 use crate::terminal::model::terminal_model::BlockIndex;
 use crate::terminal::session_history::{
     OutputSize, SessionHistoryBlockCommand, SessionHistoryEntry, format_bytes, format_duration,
-    pluralize, session_history_row_position_id,
+    format_exit_code, pluralize, session_history_row_position_id,
 };
 use crate::terminal::view::{Event as TerminalViewEvent, TerminalView};
 use crate::themes::theme::Fill as ThemeFill;
@@ -63,7 +63,8 @@ const SIZE_CACHE_LIMIT: usize = 20_000;
 /// How many unmeasured blocks one refresh may measure. Bounds the cost of
 /// opening the tab on a session with a long scrollback.
 const MEASURE_BUDGET_PER_REFRESH: usize = 200;
-const META_FONT_DELTA: f32 = 2.;
+const COMMAND_FONT_SIZE: f32 = 14.;
+const DETAIL_FONT_SIZE: f32 = 12.;
 const ROW_VERTICAL_PADDING: f32 = 5.;
 const ROW_HORIZONTAL_PADDING: f32 = 6.;
 const FAILED_STRIPE_WIDTH: f32 = 2.;
@@ -781,27 +782,43 @@ impl SessionHistoryView {
         let entry = &row.entry;
         let block_id = entry.block_id.clone();
 
+        let detail_color = theme.sub_text_color(theme.background());
         let command = Text::new_inline(
             entry.command.clone(),
             appearance.ui_font_family(),
-            appearance.ui_font_size(),
+            COMMAND_FONT_SIZE,
         )
         .with_color(theme.main_text_color(theme.background()).into())
         .finish();
 
-        let meta = Text::new_inline(
-            self.meta_line(row),
-            appearance.ui_font_family(),
-            appearance.ui_font_size() - META_FONT_DELTA,
-        )
-        .with_color(theme.sub_text_color(theme.background()).into())
-        .finish();
-
-        let text_column = Flex::column()
+        let mut text_column = Flex::column()
             .with_cross_axis_alignment(CrossAxisAlignment::Start)
-            .with_child(command)
-            .with_child(meta)
-            .finish();
+            .with_child(command);
+
+        // Skipped rather than rendered empty: a block with no recorded
+        // directory would otherwise leave an unexplained gap.
+        if let Some(pwd) = entry.pwd.as_deref() {
+            text_column.add_child(
+                Text::new_inline(
+                    pwd.to_string(),
+                    appearance.ui_font_family(),
+                    DETAIL_FONT_SIZE,
+                )
+                .with_color(detail_color.into())
+                .finish(),
+            );
+        }
+
+        text_column.add_child(
+            Text::new_inline(
+                self.detail_line(row),
+                appearance.ui_font_family(),
+                DETAIL_FONT_SIZE,
+            )
+            .with_color(detail_color.into())
+            .finish(),
+        );
+        let text_column = text_column.finish();
 
         let mut content = Container::new(text_column)
             .with_padding_top(ROW_VERTICAL_PADDING)
@@ -865,14 +882,15 @@ impl SessionHistoryView {
         SavePosition::new(hoverable, &position_id).finish()
     }
 
-    /// `~/projects/app · 1m 04s · 612 lines · 38.6 KB · 7 matches`
-    fn meta_line(&self, row: &Row) -> String {
+    /// `1m 04s · exit 101 (0x65) · 612 lines · 38.6 KB · 7 matches`
+    fn detail_line(&self, row: &Row) -> String {
         let entry = &row.entry;
-        let mut parts = Vec::new();
-        if let Some(pwd) = entry.pwd.as_deref() {
-            parts.push(pwd.to_string());
+        let mut parts = vec![self.duration_text(row)];
+        // `has_failed` is already "finished with a non-zero code", so it cannot
+        // disagree with the red styling on the row.
+        if entry.has_failed {
+            parts.push(format_exit_code(entry.exit_code));
         }
-        parts.push(self.duration_text(row));
         // Omitted rather than shown as zero while the measurement is pending.
         if let Some(size) = row.size {
             parts.push(pluralize(size.lines, "line"));

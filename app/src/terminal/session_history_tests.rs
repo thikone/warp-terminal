@@ -64,6 +64,40 @@ fn pluralize_uses_es_after_a_sibilant() {
 }
 
 #[test]
+fn exit_codes_are_decimal_without_the_hex_form() {
+    assert_eq!(format_exit_code_inner(1, false), "exit 1");
+    assert_eq!(format_exit_code_inner(127, false), "exit 127");
+    // Windows status codes overflow i32, so the decimal stays signed.
+    assert_eq!(
+        format_exit_code_inner(-1073741819, false),
+        "exit -1073741819"
+    );
+}
+
+#[test]
+fn exit_codes_gain_the_hex_form_at_the_threshold() {
+    // Below the threshold the decimal is the recognisable form on its own.
+    assert_eq!(format_exit_code_inner(1, true), "exit 1");
+    assert_eq!(format_exit_code_inner(9, true), "exit 9");
+    assert_eq!(format_exit_code_inner(10, true), "exit 10 (0xA)");
+    assert_eq!(format_exit_code_inner(127, true), "exit 127 (0x7F)");
+}
+
+#[test]
+fn crash_codes_show_the_unsigned_hex_microsoft_documents() {
+    // The threshold compares the unsigned value: signed, this is far below 10
+    // and would lose the hex that makes it identifiable.
+    assert_eq!(
+        format_exit_code_inner(-1073741819, true),
+        "exit -1073741819 (0xC0000005)"
+    );
+    assert_eq!(
+        format_exit_code_inner(-1073741510, true),
+        "exit -1073741510 (0xC000013A)"
+    );
+}
+
+#[test]
 fn row_position_ids_are_distinct_per_block() {
     let first = session_history_row_position_id(BlockIndex(0));
     let second = session_history_row_position_id(BlockIndex(1));
