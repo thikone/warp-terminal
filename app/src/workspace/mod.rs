@@ -51,7 +51,10 @@ use crate::palette::PaletteMode;
 use crate::server::telemetry::{AgentModeEntrypoint, PaletteSource};
 use crate::settings_view::{self, SettingsSection, flags};
 use crate::tab::{NewSessionMenuItem, uses_vertical_tabs};
+use crate::terminal::file_capture::CaptureRequest;
+use crate::terminal::session_history::SessionHistoryBlockCommand;
 use crate::util::bindings::{self, CustomAction, cmd_or_ctrl_shift, is_binding_pty_compliant};
+use crate::workspace::view::session_history::SessionHistoryAction;
 use crate::{code, modal, notebooks, tab_configs};
 
 // Helper function to access panel header corner radius from other modules
@@ -791,6 +794,71 @@ pub fn init(app: &mut AppContext) {
         .with_group(bindings::BindingGroup::Navigation.as_str())
         .with_context_predicate(id!("Workspace") & id!(flags::SHOW_PROJECT_EXPLORER))
         .with_custom_action(CustomAction::ToggleProjectExplorer),
+        // Block commands reachable by keyboard while the Session history panel is
+        // focused. These deliberately repeat the terminal's binding names and
+        // descriptions: the keybindings page dedupes on that pair, so each shows
+        // as one row bound to one key that works in both contexts. Only the
+        // action and the context predicate differ.
+        EditableBinding::new(
+            "terminal:copy",
+            "Copy command and output",
+            SessionHistoryAction::BlockCommand(SessionHistoryBlockCommand::Copy),
+        )
+        .with_context_predicate(id!("SessionHistoryView")),
+        EditableBinding::new(
+            "terminal:copy_outputs",
+            "Copy command output",
+            SessionHistoryAction::BlockCommand(SessionHistoryBlockCommand::CopyOutputs),
+        )
+        .with_context_predicate(id!("SessionHistoryView")),
+        EditableBinding::new(
+            "terminal:save_output_to_file",
+            "Save Output",
+            SessionHistoryAction::BlockCommand(SessionHistoryBlockCommand::Capture(
+                CaptureRequest::block_output(false),
+            )),
+        )
+        .with_context_predicate(id!("SessionHistoryView")),
+        EditableBinding::new(
+            "terminal:stream_output_to_file",
+            "Stream Output",
+            SessionHistoryAction::BlockCommand(SessionHistoryBlockCommand::Capture(
+                CaptureRequest::block_output(true),
+            )),
+        )
+        .with_context_predicate(id!("SessionHistoryView")),
+        EditableBinding::new(
+            "terminal:save_block_to_file",
+            "Save Block",
+            SessionHistoryAction::BlockCommand(SessionHistoryBlockCommand::Capture(
+                CaptureRequest::block_full(false),
+            )),
+        )
+        .with_context_predicate(id!("SessionHistoryView")),
+        EditableBinding::new(
+            "terminal:stream_block_to_file",
+            "Stream Block",
+            SessionHistoryAction::BlockCommand(SessionHistoryBlockCommand::Capture(
+                CaptureRequest::block_full(true),
+            )),
+        )
+        .with_context_predicate(id!("SessionHistoryView")),
+        EditableBinding::new(
+            "terminal:save_session_to_file",
+            "Save Session",
+            SessionHistoryAction::BlockCommand(SessionHistoryBlockCommand::Capture(
+                CaptureRequest::session(false),
+            )),
+        )
+        .with_context_predicate(id!("SessionHistoryView")),
+        EditableBinding::new(
+            "terminal:stream_session_to_file",
+            "Stream Session",
+            SessionHistoryAction::BlockCommand(SessionHistoryBlockCommand::Capture(
+                CaptureRequest::session(true),
+            )),
+        )
+        .with_context_predicate(id!("SessionHistoryView")),
         EditableBinding::new(
             LEFT_PANEL_SESSION_HISTORY_BINDING_NAME,
             BindingDescription::new("Left Panel: Session history"),

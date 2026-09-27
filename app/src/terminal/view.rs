@@ -453,6 +453,7 @@ use crate::terminal::model::{ObfuscateSecrets, RespectObfuscatedSecrets, SecretH
 use crate::terminal::model_events::{AnsiHandlerEvent, ModelEvent, ModelEventDispatcher};
 use crate::terminal::recorder::PtyRecorder;
 use crate::terminal::safe_mode_settings::get_secret_obfuscation_mode;
+use crate::terminal::session_history::SessionHistoryBlockCommand;
 use crate::terminal::session_settings::{
     DEFAULT_THRESHOLD_FOR_LONG_RUNNING_NOTIFICATION, NotificationsMode, NotificationsSettings,
     SessionSettings, SessionSettingsChangedEvent, ToolbarChipSelection,
@@ -18159,6 +18160,61 @@ impl TerminalView {
     // Additionally handles side effects of changing block selections (i.e. CMD + F results,
     // Agent Mode context, etc.). The field `self.selected_blocks` should only be mutated as part of
     // a `change_block_selections` or `change_block_selections_to_match_ai_context` invocation.
+    /// Applies the block list's modifier rules to a selection: toggle on
+    /// Cmd (mac) / Ctrl, extend on Shift, otherwise select just this block.
+    ///
+    /// Shared with the Session history panel so the two entry points cannot
+    /// drift apart.
+    fn apply_modified_block_selection(
+        &mut self,
+        block_index: BlockIndex,
+        is_ctrl_down: bool,
+        is_cmd_down: bool,
+        is_shift_down: bool,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        let should_toggle_block_selected = if cfg!(target_os = "macos") {
+            is_cmd_down
+        } else {
+            is_ctrl_down
+        };
+
+        if should_toggle_block_selected {
+            // We need to use the next and prev non-hidden indices to
+            // ensure that the tail/pivot of a range selection will never
+            // be a hidden index.
+            let next = self
+                .model
+                .lock()
+                .block_list()
+                .next_non_hidden_block_from_index(block_index);
+            let prior = self
+                .model
+                .lock()
+                .block_list()
+                .prev_non_hidden_block_from_index(block_index);
+
+            // This block's selection needs to be toggled.
+            // If it was already selected, then it will be unselected.
+            // If it wasn't already selected, it will be a new, disjoint selection.
+            self.change_block_selections(
+                |selected_blocks| {
+                    selected_blocks.toggle(block_index, next, prior);
+                },
+                ctx,
+            );
+        } else if is_shift_down && !self.selected_blocks.is_empty() {
+            self.change_block_selections(
+                |selected_blocks| {
+                    selected_blocks.range_select(block_index);
+                },
+                ctx,
+            );
+        } else {
+            self.reset_selection_to_single_block(block_index, ctx);
+        }
+    }
+
     fn change_block_selections<F>(&mut self, change_selection: F, ctx: &mut ViewContext<Self>)
     where
         F: FnOnce(&mut SelectedBlocks),
@@ -18298,46 +18354,13 @@ impl TerminalView {
                             )
                             .is_none()
                     {
-                        let should_toggle_block_selected = if cfg!(target_os = "macos") {
-                            *is_cmd_down
-                        } else {
-                            *is_ctrl_down
-                        };
-
-                        if should_toggle_block_selected {
-                            // We need to use the next and prev non-hidden indices to
-                            // ensure that the tail/pivot of a range selection will never
-                            // be a hidden index.
-                            let next = self
-                                .model
-                                .lock()
-                                .block_list()
-                                .next_non_hidden_block_from_index(*block_index);
-                            let prior = self
-                                .model
-                                .lock()
-                                .block_list()
-                                .prev_non_hidden_block_from_index(*block_index);
-
-                            // This block's selection needs to be toggled.
-                            // If it was already selected, then it will be unselected.
-                            // If it wasn't already selected, it will be a new, disjoint selection.
-                            self.change_block_selections(
-                                |selected_blocks| {
-                                    selected_blocks.toggle(*block_index, next, prior);
-                                },
-                                ctx,
-                            );
-                        } else if *is_shift_down && !self.selected_blocks.is_empty() {
-                            self.change_block_selections(
-                                |selected_blocks| {
-                                    selected_blocks.range_select(*block_index);
-                                },
-                                ctx,
-                            );
-                        } else {
-                            self.reset_selection_to_single_block(*block_index, ctx);
-                        }
+                        self.apply_modified_block_selection(
+                            *block_index,
+                            *is_ctrl_down,
+                            *is_cmd_down,
+                            *is_shift_down,
+                            ctx,
+                        );
 
                         if !self.ai_input_model.as_ref(ctx).is_ai_input_enabled() {
                             send_telemetry_from_ctx!(
@@ -21718,6 +21741,65 @@ impl TerminalView {
             items,
             ctx,
         );
+    }
+
+    /// The blocks currently selected, for the Session history panel to mirror.
+    pub fn selected_block_indices(&self) -> Vec<BlockIndex> {
+        self.selected_blocks.block_indices().collect()
+    }
+
+    /// The end of the most recent selection range -- the row the Session history
+    /// panel scrolls to when the selection changes.
+    pub fn selected_blocks_tail(&self) -> Option<BlockIndex> {
+        self.selected_blocks.tail()
+    }
+
+    /// Click on a Session history row, carrying the modifiers so the panel builds
+    /// selections by the same rules as the block list.
+    pub fn select_block_from_session_history(
+        &mut self,
+        block_index: BlockIndex,
+        is_ctrl_down: bool,
+        is_cmd_down: bool,
+        is_shift_down: bool,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        if self
+            .model
+            .lock()
+            .block_list()
+            .block_at(block_index)
+            .is_none()
+        {
+            return;
+        }
+        self.apply_modified_block_selection(
+            block_index,
+            is_ctrl_down,
+            is_cmd_down,
+            is_shift_down,
+            ctx,
+        );
+        self.scroll_to_if_not_visible(block_index, ctx);
+    }
+
+    /// Runs one of the block commands the Session history panel offers by
+    /// keyboard. Deliberately a closed set rather than general action dispatch.
+    ///
+    /// Each acts on the current block selection, which the panel keeps in sync.
+    pub fn run_block_command_from_session_history(
+        &mut self,
+        command: SessionHistoryBlockCommand,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        match command {
+            SessionHistoryBlockCommand::Copy => self.copy(ctx),
+            SessionHistoryBlockCommand::CopyOutputs => self.copy_outputs(ctx),
+            #[cfg(feature = "local_fs")]
+            SessionHistoryBlockCommand::Capture(request) => self.capture_to_file(request, ctx),
+            #[cfg(not(feature = "local_fs"))]
+            SessionHistoryBlockCommand::Capture(_) => {}
+        }
     }
 
     /// Selects a block and scrolls it into view. Entry point for a left-click on

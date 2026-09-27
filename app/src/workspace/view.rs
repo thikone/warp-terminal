@@ -15,7 +15,7 @@ pub(crate) mod onboarding;
 pub(crate) mod openwarp_launch_modal;
 pub(crate) mod orchestration_launch_modal;
 pub(crate) mod right_panel;
-mod session_history;
+pub(crate) mod session_history;
 mod startup_directory;
 mod tab_grouping;
 #[cfg(test)]

@@ -10,6 +10,7 @@
 
 use chrono::{DateTime, Local};
 
+use crate::terminal::file_capture::CaptureRequest;
 use crate::terminal::model::BlockId;
 use crate::terminal::model::block::Block;
 use crate::terminal::model::terminal_model::BlockIndex;
@@ -51,6 +52,18 @@ impl OutputSize {
             bytes: output.len(),
         }
     }
+}
+
+/// The block commands the Session history panel can run by keyboard.
+///
+/// A closed set rather than general action dispatch: the panel is not a
+/// descendant of the terminal view, so it forwards through one narrow entry
+/// point. See [`crate::terminal::view::TerminalView::run_block_command_from_session_history`].
+#[derive(Clone, Copy, Debug)]
+pub enum SessionHistoryBlockCommand {
+    Copy,
+    CopyOutputs,
+    Capture(CaptureRequest),
 }
 
 /// Id of the save-position element wrapping a session history row.

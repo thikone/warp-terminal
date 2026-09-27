@@ -22,10 +22,11 @@ use warpui::elements::{
     MouseStateHandle, OffsetPositioning, ParentAnchor, ParentElement, ParentOffsetBounds, Radius,
     SavePosition, ScrollTarget, ScrollToPositionMode, ScrollbarWidth, Shrinkable, Stack, Text,
 };
+use warpui::event::ModifiersState;
 use warpui::platform::Cursor;
 use warpui::ui_components::components::{UiComponent, UiComponentStyles};
 use warpui::{
-    AppContext, Entity, SingletonEntity, TypedActionView, View, ViewContext, ViewHandle,
+    AppContext, Entity, EntityId, SingletonEntity, TypedActionView, View, ViewContext, ViewHandle,
     WeakViewHandle,
 };
 
@@ -39,10 +40,10 @@ use crate::search_bar::SearchBar;
 use crate::terminal::model::BlockId;
 use crate::terminal::model::terminal_model::BlockIndex;
 use crate::terminal::session_history::{
-    OutputSize, SessionHistoryEntry, format_bytes, format_duration, pluralize,
-    session_history_row_position_id,
+    OutputSize, SessionHistoryBlockCommand, SessionHistoryEntry, format_bytes, format_duration,
+    pluralize, session_history_row_position_id,
 };
-use crate::terminal::view::TerminalView;
+use crate::terminal::view::{Event as TerminalViewEvent, TerminalView};
 use crate::themes::theme::Fill as ThemeFill;
 use crate::ui_components::icons::Icon;
 use crate::view_components::find::{CASE_SENSITIVE_TOOLTIP, REGEX_TOGGLE_TOOLTIP};
@@ -80,11 +81,17 @@ pub enum FilterScope {
 
 #[derive(Clone, Debug)]
 pub enum SessionHistoryAction {
-    RowClicked(BlockId),
+    RowClicked {
+        block_id: BlockId,
+        modifiers: ModifiersState,
+    },
+    RowDoubleClicked(BlockId),
     RowRightClicked {
         block_id: BlockId,
         position_in_row: Vector2F,
     },
+    /// Forwarded from a keybinding while the panel is focused.
+    BlockCommand(SessionHistoryBlockCommand),
     ToggleScope(FilterScope),
     ToggleRegex,
     ToggleCaseSensitive,
@@ -144,6 +151,13 @@ pub struct SessionHistoryView {
 
     active_pane_group: Option<WeakViewHandle<PaneGroup>>,
     is_active: bool,
+
+    /// Mirrors the terminal's block selection.
+    selected: HashSet<BlockIndex>,
+    /// Terminals already subscribed to. `subscribe_to_view` cannot be undone, so
+    /// each terminal is subscribed at most once; the subscriptions die with the
+    /// terminal rather than accumulating.
+    subscribed_terminals: HashSet<EntityId>,
 }
 
 impl SessionHistoryView {
@@ -197,7 +211,63 @@ impl SessionHistoryView {
             last_row_id: None,
             active_pane_group: None,
             is_active: false,
+            selected: HashSet::new(),
+            subscribed_terminals: HashSet::new(),
         }
+    }
+
+    /// Subscribes to the active terminal's selection changes, once per terminal.
+    ///
+    /// The callback is guarded on the emitter being the active terminal, so a
+    /// background pane's selection never drives the panel.
+    fn subscribe_to_active_terminal(&mut self, ctx: &mut ViewContext<Self>) {
+        let Some(terminal_view) = self.terminal_view(ctx) else {
+            return;
+        };
+        if !self.subscribed_terminals.insert(terminal_view.id()) {
+            return;
+        }
+        ctx.subscribe_to_view(&terminal_view, |me, emitter, event, ctx| {
+            if !matches!(event, TerminalViewEvent::SelectedBlocksChanged) {
+                return;
+            }
+            if me.terminal_view(ctx).map(|active| active.id()) != Some(emitter.id()) {
+                return;
+            }
+            me.sync_selection_from_terminal(ctx);
+        });
+    }
+
+    /// Re-reads the terminal's selection and brings the newly selected row into
+    /// view. Never applies the on-select filter/find toggles: those belong to an
+    /// explicit click in the panel, so selecting a block in the terminal does not
+    /// silently filter its own output.
+    fn sync_selection_from_terminal(&mut self, ctx: &mut ViewContext<Self>) {
+        let Some(terminal_view) = self.terminal_view(ctx) else {
+            return;
+        };
+        let (selected, tail) = {
+            let terminal = terminal_view.as_ref(ctx);
+            (
+                terminal.selected_block_indices(),
+                terminal.selected_blocks_tail(),
+            )
+        };
+        let selected: HashSet<BlockIndex> = selected.into_iter().collect();
+        if selected == self.selected {
+            return;
+        }
+        self.selected = selected;
+
+        // A no-op when the row is already visible, which is what keeps a
+        // selection made on-screen from jumping the list.
+        if let Some(tail) = tail {
+            self.scroll_state.scroll_to_position(ScrollTarget {
+                position_id: session_history_row_position_id(tail),
+                mode: ScrollToPositionMode::FullyIntoView,
+            });
+        }
+        ctx.notify();
     }
 
     /// The block list has no change notification reachable from out here, so the
@@ -220,6 +290,8 @@ impl SessionHistoryView {
         ctx: &mut ViewContext<Self>,
     ) {
         self.active_pane_group = pane_group;
+        self.subscribe_to_active_terminal(ctx);
+        self.sync_selection_from_terminal(ctx);
         // Sizes are keyed by block id, so they stay valid across a tab switch;
         // the rows themselves must be rebuilt from the new session.
         self.refresh(ctx);
@@ -231,6 +303,8 @@ impl SessionHistoryView {
         }
         self.is_active = is_active;
         if is_active {
+            self.subscribe_to_active_terminal(ctx);
+            self.sync_selection_from_terminal(ctx);
             self.refresh(ctx);
         }
     }
@@ -455,7 +529,12 @@ impl SessionHistoryView {
     ///
     /// With both toggles on the filter is applied without its toolbar, so the
     /// find bar is the only thing that opens.
-    fn activate_row(&mut self, block_id: &BlockId, ctx: &mut ViewContext<Self>) {
+    fn activate_row(
+        &mut self,
+        block_id: &BlockId,
+        modifiers: ModifiersState,
+        ctx: &mut ViewContext<Self>,
+    ) {
         let (Some(block_index), Some(terminal_view)) =
             (self.block_index_for(block_id), self.terminal_view(ctx))
         else {
@@ -464,10 +543,19 @@ impl SessionHistoryView {
         let query = self.query(ctx);
         let (regex, case_sensitive) = (self.regex_enabled, self.case_sensitive);
         let (filter_on_select, find_on_select) = (self.filter_on_select, self.find_on_select);
+        // A modified click is building a selection, not asking to inspect one
+        // block, so the on-select toggles stay out of it.
+        let is_plain_click = !(modifiers.shift || modifiers.ctrl || modifiers.cmd);
 
         terminal_view.update(ctx, |terminal, ctx| {
-            terminal.reveal_block_from_session_history(block_index, ctx);
-            if query.is_empty() {
+            terminal.select_block_from_session_history(
+                block_index,
+                modifiers.ctrl,
+                modifiers.cmd,
+                modifiers.shift,
+                ctx,
+            );
+            if query.is_empty() || !is_plain_click {
                 return;
             }
             if filter_on_select {
@@ -491,6 +579,42 @@ impl SessionHistoryView {
                     ctx,
                 );
             }
+        });
+    }
+
+    /// Double-click hands the keyboard to the terminal, for carrying on in the
+    /// block list. A single click deliberately leaves focus in the panel.
+    fn focus_terminal_from_row(&mut self, block_id: &BlockId, ctx: &mut ViewContext<Self>) {
+        let (Some(block_index), Some(pane_group), Some(terminal_view)) = (
+            self.block_index_for(block_id),
+            self.active_pane_group
+                .as_ref()
+                .and_then(|group| group.upgrade(ctx)),
+            self.terminal_view(ctx),
+        ) else {
+            return;
+        };
+        let terminal_id = terminal_view.id();
+        terminal_view.update(ctx, |terminal, ctx| {
+            terminal.reveal_block_from_session_history(block_index, ctx);
+        });
+        pane_group.update(ctx, |group, ctx| {
+            group.focus_terminal_view(terminal_id, ctx);
+        });
+    }
+
+    /// Runs a block command forwarded from a keybinding while the panel is
+    /// focused. Acts on the shared selection, so it matches what the rows show.
+    fn run_block_command(
+        &mut self,
+        command: SessionHistoryBlockCommand,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        let Some(terminal_view) = self.terminal_view(ctx) else {
+            return;
+        };
+        terminal_view.update(ctx, |terminal, ctx| {
+            terminal.run_block_command_from_session_history(command, ctx);
         });
     }
 
@@ -694,14 +818,31 @@ impl SessionHistoryView {
                 .with_border(Border::left(FAILED_STRIPE_WIDTH).with_border_fill(failed));
         }
 
+        // Selection wins over the failure wash, as it does in the block list;
+        // the red stripe stays, so a failed row still reads as failed.
+        if self.selected.contains(&entry.block_index) {
+            content = content.with_background(theme.block_selection_color());
+        }
+
         let position_id = session_history_row_position_id(entry.block_index);
         let content = content.finish();
         let hoverable = Hoverable::new(self.row_mouse_state(&entry.block_id), move |_| content)
             .with_cursor(Cursor::PointingHand)
-            .on_click({
+            .on_click_with_modifiers({
+                let block_id = block_id.clone();
+                move |ctx, _, _, modifiers| {
+                    ctx.dispatch_typed_action(SessionHistoryAction::RowClicked {
+                        block_id: block_id.clone(),
+                        modifiers,
+                    });
+                }
+            })
+            .on_double_click({
                 let block_id = block_id.clone();
                 move |ctx, _, _| {
-                    ctx.dispatch_typed_action(SessionHistoryAction::RowClicked(block_id.clone()));
+                    ctx.dispatch_typed_action(SessionHistoryAction::RowDoubleClicked(
+                        block_id.clone(),
+                    ));
                 }
             })
             .on_right_click({
@@ -859,7 +1000,14 @@ impl TypedActionView for SessionHistoryView {
 
     fn handle_action(&mut self, action: &SessionHistoryAction, ctx: &mut ViewContext<Self>) {
         match action {
-            SessionHistoryAction::RowClicked(block_id) => self.activate_row(block_id, ctx),
+            SessionHistoryAction::RowClicked {
+                block_id,
+                modifiers,
+            } => self.activate_row(block_id, *modifiers, ctx),
+            SessionHistoryAction::RowDoubleClicked(block_id) => {
+                self.focus_terminal_from_row(block_id, ctx)
+            }
+            SessionHistoryAction::BlockCommand(command) => self.run_block_command(*command, ctx),
             SessionHistoryAction::RowRightClicked {
                 block_id,
                 position_in_row,
