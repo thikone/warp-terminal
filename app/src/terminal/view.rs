@@ -21728,17 +21728,18 @@ impl TerminalView {
         position_in_row: Vector2F,
         ctx: &mut ViewContext<Self>,
     ) {
-        self.reveal_block_from_session_history(block_index, ctx);
-        let menu_source = BlockListMenuSource::SessionHistoryRow {
-            block_index,
-            position_in_row,
-        };
-        let items = self.context_menu_items(&menu_source, ctx);
-        self.show_context_menu(
-            ContextMenuState {
-                menu_type: ContextMenuType::BlockList { menu_source },
+        if self.model.lock().block_list().block_at(block_index).is_none() {
+            return;
+        }
+        self.scroll_to_if_not_visible(block_index, ctx);
+        // Defers to the block list's own handler, which collapses the selection
+        // only when the clicked block is not already part of it -- so a
+        // right-click inside a multi-selection acts on the whole selection.
+        self.block_list_context_menu(
+            &BlockListMenuSource::SessionHistoryRow {
+                block_index,
+                position_in_row,
             },
-            items,
             ctx,
         );
     }
