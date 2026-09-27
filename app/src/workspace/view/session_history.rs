@@ -17,10 +17,11 @@ use pathfinder_color::ColorU;
 use pathfinder_geometry::vector::{Vector2F, vec2f};
 use regex::{Regex, RegexBuilder};
 use warpui::elements::{
-    Border, ChildAnchor, ChildView, ClippedScrollStateHandle, ClippedScrollable, ConstrainedBox,
-    Container, CornerRadius, CrossAxisAlignment, Element, Fill, Flex, Hoverable, MainAxisSize,
-    MouseStateHandle, OffsetPositioning, ParentAnchor, ParentElement, ParentOffsetBounds, Radius,
-    SavePosition, ScrollTarget, ScrollToPositionMode, ScrollbarWidth, Shrinkable, Stack, Text,
+    Border, ChildAnchor, ChildView, Clipped, ClippedScrollStateHandle, ClippedScrollable,
+    ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, DispatchEventResult, Element,
+    EventHandler, Fill, Flex, Hoverable, MainAxisSize, MouseStateHandle, OffsetPositioning,
+    ParentAnchor, ParentElement, ParentOffsetBounds, Radius, Rect, SavePosition, ScrollTarget,
+    ScrollToPositionMode, ScrollbarWidth, Shrinkable, Stack, Text,
 };
 use warpui::event::ModifiersState;
 use warpui::platform::Cursor;
@@ -35,7 +36,6 @@ use crate::editor::{
     EditorView, PropagateAndNoOpNavigationKeys, SingleLineEditorOptions, TextOptions,
 };
 use crate::pane_group::PaneGroup;
-use crate::search_bar::SearchBar;
 // Distinct from `warpui::elements::Fill`, which the scrollable takes.
 use crate::terminal::model::BlockId;
 use crate::terminal::model::terminal_model::BlockIndex;
@@ -46,13 +46,20 @@ use crate::terminal::session_history::{
 use crate::terminal::view::{Event as TerminalViewEvent, TerminalView};
 use crate::themes::theme::Fill as ThemeFill;
 use crate::ui_components::icons::Icon;
-use crate::view_components::find::{CASE_SENSITIVE_TOOLTIP, REGEX_TOGGLE_TOOLTIP};
+use crate::view_components::find::{
+    CASE_SENSITIVE_TOOLTIP, FIND_EDITOR_BORDER_RADIUS, FIND_EDITOR_BORDER_WIDTH,
+    REGEX_TOGGLE_TOOLTIP,
+};
 
 /// How often the list re-reads the block list while the tab is showing. Also
 /// paces the running command's ticking duration and growing size.
 const REFRESH_INTERVAL: Duration = Duration::from_millis(500);
 
 const SEARCH_PLACEHOLDER: &str = "Filter commands";
+/// Matches `FIND_EDITOR_FONT_SIZE` and `BLOCK_FILTER_FONT_SIZE`.
+const SEARCH_FIELD_FONT_SIZE: f32 = 12.;
+const SEARCH_FIELD_ICON_SIZE: f32 = 12.;
+const SEARCH_FIELD_PADDING: f32 = 6.;
 const TOGGLE_ICON_SIZE: f32 = 14.;
 const TOGGLE_ICON_PADDING: f32 = 4.;
 const TOGGLE_ICON_SPACING: f32 = 4.;
@@ -98,6 +105,8 @@ pub enum SessionHistoryAction {
     ToggleCaseSensitive,
     ToggleFilterOnSelect,
     ToggleFindOnSelect,
+    ClearQuery,
+    SearchFieldClicked,
 }
 
 /// A history entry with its output size resolved and, when the output scope is
@@ -113,6 +122,7 @@ struct Row {
 
 #[derive(Default)]
 struct ToggleStates {
+    clear: MouseStateHandle,
     command: MouseStateHandle,
     directory: MouseStateHandle,
     output: MouseStateHandle,
@@ -123,7 +133,6 @@ struct ToggleStates {
 }
 
 pub struct SessionHistoryView {
-    search_bar: ViewHandle<SearchBar>,
     search_editor: ViewHandle<EditorView>,
     scroll_state: ClippedScrollStateHandle,
 
@@ -166,10 +175,10 @@ impl SessionHistoryView {
         let search_editor = {
             let appearance = Appearance::as_ref(ctx);
             let options = SingleLineEditorOptions {
-                text: TextOptions {
-                    font_size_override: Some(appearance.ui_font_size()),
-                    ..Default::default()
-                },
+                // `ui_text` also sets the font family. Overriding only the size
+                // leaves the editor on its default monospace family, which is
+                // what made this field look unlike the find and filter bars.
+                text: TextOptions::ui_text(Some(SEARCH_FIELD_FONT_SIZE), appearance),
                 propagate_and_no_op_vertical_navigation_keys:
                     PropagateAndNoOpNavigationKeys::Always,
                 ..Default::default()
@@ -187,12 +196,9 @@ impl SessionHistoryView {
             me.refresh(ctx);
         });
 
-        let search_bar = ctx.add_typed_action_view(|_| SearchBar::new(search_editor.clone()));
-
         Self::start_refresh_tick(ctx);
 
         Self {
-            search_bar,
             search_editor,
             scroll_state: Default::default(),
             scope_command: true,
@@ -698,7 +704,9 @@ impl SessionHistoryView {
                         .finish(),
                     OffsetPositioning::offset_from_parent(
                         vec2f(0., -5.),
-                        ParentOffsetBounds::Unbounded,
+                        // Not `Unbounded`: in a left-edge panel a tooltip centred
+                        // on the leftmost toggle overflows past x=0 and is clipped.
+                        ParentOffsetBounds::WindowByPosition,
                         ParentAnchor::TopMiddle,
                         ChildAnchor::BottomMiddle,
                     ),
@@ -740,6 +748,96 @@ impl SessionHistoryView {
                 SessionHistoryAction::ToggleScope(FilterScope::Output),
                 appearance,
             ))
+            .with_child(self.render_group_separator(appearance))
+            .with_child(self.render_toggle(
+                Icon::FilterFunnel,
+                self.filter_on_select,
+                self.toggle_states.filter_on_select.clone(),
+                "Filter the block's output when selected",
+                SessionHistoryAction::ToggleFilterOnSelect,
+                appearance,
+            ))
+            .with_child(self.render_toggle(
+                Icon::CornersOfBox,
+                self.find_on_select,
+                self.toggle_states.find_on_select.clone(),
+                "Find within the block when selected",
+                SessionHistoryAction::ToggleFindOnSelect,
+                appearance,
+            ))
+            .finish();
+
+        Container::new(toggles).with_padding_bottom(4.).finish()
+    }
+
+    /// Divides the scope toggles from the on-select toggles, the way the block
+    /// filter separates its clear button from its options.
+    fn render_group_separator(&self, appearance: &Appearance) -> Box<dyn Element> {
+        Container::new(
+            ConstrainedBox::new(
+                Rect::new()
+                    .with_background(appearance.theme().split_pane_border_color())
+                    .finish(),
+            )
+            .with_width(1.)
+            .with_height(TOGGLE_ICON_SIZE)
+            .finish(),
+        )
+        .with_margin_left(TOGGLE_ICON_SPACING)
+        .with_margin_right(TOGGLE_ICON_SPACING * 2.)
+        .finish()
+    }
+
+    /// The query field: magnifier and editor, then the clear button and the two
+    /// query options, all inside one border -- as the find bar and block filter
+    /// lay theirs out.
+    fn render_search_field(&self, appearance: &Appearance) -> Box<dyn Element> {
+        let theme = appearance.theme();
+        let icon_color = theme.sub_text_color(theme.surface_1());
+
+        let magnifier = Container::new(
+            ConstrainedBox::new(Icon::Search.to_warpui_icon(icon_color).finish())
+                .with_height(SEARCH_FIELD_ICON_SIZE)
+                .with_width(SEARCH_FIELD_ICON_SIZE)
+                .finish(),
+        )
+        .with_padding_right(SEARCH_FIELD_PADDING)
+        .finish();
+
+        // Only the magnifier and the editor focus on click. Wrapping the whole
+        // row, as `SearchBar` does, would swallow clicks on the toggles beside
+        // them.
+        let query = EventHandler::new(
+            Flex::row()
+                .with_cross_axis_alignment(CrossAxisAlignment::Center)
+                .with_child(magnifier)
+                .with_child(
+                    Shrinkable::new(
+                        1.,
+                        Clipped::new(ChildView::new(&self.search_editor).finish()).finish(),
+                    )
+                    .finish(),
+                )
+                .finish(),
+        )
+        .on_left_mouse_down(|ctx, _, _| {
+            ctx.dispatch_typed_action(SessionHistoryAction::SearchFieldClicked);
+            DispatchEventResult::StopPropagation
+        })
+        .finish();
+
+        let row = Flex::row()
+            .with_cross_axis_alignment(CrossAxisAlignment::Center)
+            .with_child(Shrinkable::new(1., query).finish())
+            .with_child(self.render_toggle(
+                Icon::XCircle,
+                false,
+                self.toggle_states.clear.clone(),
+                "Clear filter",
+                SessionHistoryAction::ClearQuery,
+                appearance,
+            ))
+            .with_child(self.render_group_separator(appearance))
             .with_child(self.render_toggle(
                 Icon::Regex,
                 self.regex_enabled,
@@ -756,25 +854,18 @@ impl SessionHistoryView {
                 SessionHistoryAction::ToggleCaseSensitive,
                 appearance,
             ))
-            .with_child(self.render_toggle(
-                Icon::FilterLines,
-                self.filter_on_select,
-                self.toggle_states.filter_on_select.clone(),
-                "Filter the block's output when selected",
-                SessionHistoryAction::ToggleFilterOnSelect,
-                appearance,
-            ))
-            .with_child(self.render_toggle(
-                Icon::Search,
-                self.find_on_select,
-                self.toggle_states.find_on_select.clone(),
-                "Find within the block when selected",
-                SessionHistoryAction::ToggleFindOnSelect,
-                appearance,
-            ))
             .finish();
 
-        Container::new(toggles).with_padding_bottom(4.).finish()
+        Container::new(row)
+            .with_padding_left(SEARCH_FIELD_PADDING)
+            .with_vertical_padding(SEARCH_FIELD_PADDING)
+            .with_background(theme.surface_1())
+            .with_border(Border::all(FIND_EDITOR_BORDER_WIDTH).with_border_fill(theme.surface_3()))
+            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(
+                FIND_EDITOR_BORDER_RADIUS,
+            )))
+            .with_margin_bottom(4.)
+            .finish()
     }
 
     fn render_row(&self, row: &Row, appearance: &Appearance) -> Box<dyn Element> {
@@ -961,11 +1052,7 @@ impl View for SessionHistoryView {
         let appearance = Appearance::as_ref(app);
 
         let mut column = Flex::column().with_cross_axis_alignment(CrossAxisAlignment::Stretch);
-        column.add_child(
-            Container::new(ChildView::new(&self.search_bar).finish())
-                .with_padding_bottom(4.)
-                .finish(),
-        );
+        column.add_child(self.render_search_field(appearance));
         column.add_child(self.render_toggle_bar(appearance));
 
         let body: Box<dyn Element> = if self.rows.is_empty() {
@@ -1049,6 +1136,12 @@ impl TypedActionView for SessionHistoryView {
                 self.find_on_select = !self.find_on_select;
                 ctx.notify();
             }
+            SessionHistoryAction::ClearQuery => {
+                self.search_editor.update(ctx, |editor, ctx| {
+                    editor.system_clear_buffer(false, ctx);
+                });
+            }
+            SessionHistoryAction::SearchFieldClicked => ctx.focus(&self.search_editor),
         }
     }
 }
