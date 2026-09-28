@@ -791,9 +791,13 @@ impl SessionHistoryView {
     /// The query field: magnifier and editor, then the clear button and the two
     /// query options, all inside one border -- as the find bar and block filter
     /// lay theirs out.
+    ///
+    /// Unlike those two it paints no fill. They sit over the terminal's opaque
+    /// blocks, where a tint separates the field from them; the tool panel instead
+    /// shows the window's backdrop through everything it does not paint.
     fn render_search_field(&self, appearance: &Appearance) -> Box<dyn Element> {
         let theme = appearance.theme();
-        let icon_color = theme.sub_text_color(theme.surface_1());
+        let icon_color = theme.sub_text_color(theme.background());
 
         let magnifier = Container::new(
             ConstrainedBox::new(Icon::Search.to_warpui_icon(icon_color).finish())
@@ -859,7 +863,6 @@ impl SessionHistoryView {
         Container::new(row)
             .with_padding_left(SEARCH_FIELD_PADDING)
             .with_vertical_padding(SEARCH_FIELD_PADDING)
-            .with_background(theme.surface_1())
             .with_border(Border::all(FIND_EDITOR_BORDER_WIDTH).with_border_fill(theme.surface_3()))
             .with_corner_radius(CornerRadius::with_all(Radius::Pixels(
                 FIND_EDITOR_BORDER_RADIUS,
