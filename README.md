@@ -284,34 +284,54 @@ new one takes their place:
 | ~~Agent conversations~~ | ~~`Alt+2`~~ | removed |
 | ~~Warp Drive~~ | ~~`Alt+4`~~ | removed |
 
-Session history lists the commands run in the active session — command,
-working directory, how long it took, and how much output it produced:
+Session history lists the commands run in the active session. Each row is three
+lines — the command, its working directory, then how long it took, its exit code
+if it failed, and how much output it produced:
 
 ```
-● cargo build --release
-  ~/projects/app · 1m 04s · 612 lines · 38.6 KB
-● cargo test
-  ~/projects/app · 22.1s · 88 lines · 4.2 KB
+cargo build --release
+~/projects/app
+1m 04s · 612 lines · 38.6 KB
+
+cargo test
+~/projects/app
+22.1s · exit 101 · 88 lines · 4.2 KB
 ```
 
 Failed commands get the same treatment the block list gives a failed block: a
 red left stripe over a 10% wash. Running commands appear immediately with a
 ticking duration and growing size. Rows are in terminal order, oldest first.
 
-**Left-click** a row to select that block and scroll to it. **Right-click** for
-the block's own context menu — the same one its `...` button opens — positioned
-beside the row.
+Exit codes are shown only for commands that failed, in decimal. On Windows a
+code of 256 or more also gets its hexadecimal form —
+`exit -1073741819 (0xC0000005)` — because anything past the 0-255 range a shell
+can report is a Windows status code, which documentation and search results
+give in hex. The decimal stays signed while the hex is the unsigned
+reinterpretation, since those status codes overflow `i32`. The cutoff is
+`EXIT_CODE_HEX_THRESHOLD` in `app/src/terminal/session_history.rs`.
+
+### Selection
+
+Selection is shared with the block list: select in either and the other
+highlights and scrolls to match. Rows use the block list's own modifier rules —
+**Shift-click** extends a range, **Ctrl-click** toggles one in or out, a plain
+click selects one. **Double-click** hands the keyboard to the terminal.
+
+Copy and capture shortcuts work while the panel is focused: `Ctrl+Shift+C`,
+`Ctrl+Alt+Shift+C`, `Ctrl+Shift+S` and `Ctrl+Alt+Shift+S`, acting on the shared
+selection. They are registered under the terminal's own binding names, so
+Settings → Keyboard Shortcuts shows one row per command, not two.
 
 ### Filtering
 
-A filter box with seven toggles. Three choose what the query matches — command,
-working directory, output — independently; command and directory start on,
-output starts off because it is the only one that has to read every block's
-text. With output matching on, rows show a match count. Two more toggles switch
-the query to a regular expression and to case-sensitive, mirroring the block
-filter toolbar.
+The query field holds the regex and case-sensitive toggles and a clear button,
+laid out like the find bar and the block filter. Below it are five toggles in
+two groups:
 
-The last two decide what happens when you select a row:
+- **scope** — command, working directory, output. Independent; command and
+  directory start on, output starts off because it is the only one that has to
+  read every block's text. With it on, rows show a match count.
+- **on-select** — what happens when you select a row:
 
 | filter-on-select | find-on-select | behaviour |
 |---|---|---|
@@ -319,6 +339,10 @@ The last two decide what happens when you select a row:
 | on | off | open the block filter toolbar, pre-filled |
 | off | on | open the find bar, scoped to that block |
 | on | on | apply the filter silently, and open the find bar |
+
+These fire only for a plain click in the panel. A modified click is building a
+selection, and a selection made in the terminal must not silently filter the
+output of a block you merely clicked on there.
 
 ### Where the code lives
 
@@ -334,10 +358,15 @@ size measurement, and the duration/byte formatting, with unit tests in
 - `app/src/workspace/view/left_panel.rs` — the `SessionHistory` tab, its
   toolbelt button (`Icon::History`) and its render/focus wiring.
 - `app/src/terminal/view.rs` — the panel-facing API: `session_history_entries`,
-  `block_output_size`, `reveal_block_from_session_history`, and the filter/find
-  entry points.
+  `block_output_size`, `reveal_block_from_session_history`, the filter/find
+  entry points, and `select_block_from_session_history`, which shares the block
+  list's modifier rules via `apply_modified_block_selection` so the two cannot
+  drift.
 - `app/src/terminal/block_list_element.rs` — a `SessionHistoryRow` menu source
   carrying a row-relative position, so the block menu can open over the panel.
+- `app/src/workspace/mod.rs` — eight bindings in the panel's context, repeating
+  the terminal bindings' names and descriptions so the keybindings page dedupes
+  them into one row each.
 - `app/src/settings/code.rs` — `code.editor.show_session_history`.
 
 The `ToolPanelView::WarpDrive` and `::ConversationListView` variants still

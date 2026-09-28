@@ -76,17 +76,20 @@ fn exit_codes_are_decimal_without_the_hex_form() {
 
 #[test]
 fn exit_codes_gain_the_hex_form_at_the_threshold() {
-    // Below the threshold the decimal is the recognisable form on its own.
+    // Everything a shell can report fits in 0-255 and reads as decimal.
     assert_eq!(format_exit_code_inner(1, true), "exit 1");
-    assert_eq!(format_exit_code_inner(9, true), "exit 9");
-    assert_eq!(format_exit_code_inner(10, true), "exit 10 (0xA)");
-    assert_eq!(format_exit_code_inner(127, true), "exit 127 (0x7F)");
+    assert_eq!(format_exit_code_inner(127, true), "exit 127");
+    assert_eq!(format_exit_code_inner(255, true), "exit 255");
+    // Past that it is a Windows status code, where hex is the form
+    // documentation and search results use. 9009 is cmd's "not found".
+    assert_eq!(format_exit_code_inner(256, true), "exit 256 (0x100)");
+    assert_eq!(format_exit_code_inner(9009, true), "exit 9009 (0x2331)");
 }
 
 #[test]
 fn crash_codes_show_the_unsigned_hex_microsoft_documents() {
-    // The threshold compares the unsigned value: signed, this is far below 10
-    // and would lose the hex that makes it identifiable.
+    // The threshold compares the unsigned value: signed, these are far below
+    // 256 and would lose the hex that makes them identifiable.
     assert_eq!(
         format_exit_code_inner(-1073741819, true),
         "exit -1073741819 (0xC0000005)"

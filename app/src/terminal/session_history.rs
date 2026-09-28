@@ -112,10 +112,11 @@ pub fn format_duration(seconds: f64) -> String {
     }
 }
 
-/// Above this the hexadecimal form is the one people recognise, so it is shown
-/// alongside the decimal. Compared against the *unsigned* reinterpretation: see
+/// Shells report 0-255 and those read naturally as decimal. Anything larger is
+/// a Windows status code, where hex is the form documentation and search results
+/// use. Compared against the *unsigned* reinterpretation: see
 /// [`format_exit_code_inner`].
-const EXIT_CODE_HEX_THRESHOLD: u32 = 10;
+const EXIT_CODE_HEX_THRESHOLD: u32 = 256;
 
 /// `"exit 1"`, or `"exit -1073741819 (0xC0000005)"` on Windows.
 pub fn format_exit_code(code: i32) -> String {
