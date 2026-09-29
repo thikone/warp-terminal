@@ -409,7 +409,7 @@ tag. Neither script creates a tag or pushes anything.
 
 The rest of this section is what those scripts do, and why.
 
-Prerequisites: Rust 1.92.0 (pinned by `rust-toolchain.toml`), VS Build Tools with
+Prerequisites: Rust 1.98.1 (pinned by `rust-toolchain.toml`), VS Build Tools with
 the MSVC toolchain and a Windows SDK, CMake, protoc, NASM. **LLVM/libclang is not
 needed** — `bindgen` only runs when the target OS is macOS
 (`crates/warpui/build.rs`).
