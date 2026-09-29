@@ -481,6 +481,21 @@ Three differences from the Windows build, all deliberate:
   `app/src/bin/oss.rs` embeds its own `Info.plist` through `embed_plist`, so the bare
   binary already carries `CFBundleIdentifier` and the rest.
 
+### Linux runtime dependencies
+
+The binary `dlopen`s its windowing and graphics libraries rather than linking them, so
+`ldd` lists only seven entries and a missing one shows up as a failure to open a
+window rather than as a load error. On a minimal Ubuntu install:
+
+```bash
+sudo apt install libx11-6 libx11-xcb1 libxcb1 libxi6 libxcursor1                  libxkbcommon0 libxkbcommon-x11-0                  libwayland-client0 libwayland-egl1 libegl1                  libvulkan1 mesa-vulkan-drivers fontconfig
+```
+
+A Vulkan driver is needed as well as the loader — a present `libvulkan1` with nothing
+behind it fails the same way. `script/portable/install.sh` checks for all of these and
+prints the apt line for whatever is missing, so it is worth running once even if you
+do not want the desktop entry.
+
 Linux build dependencies come from `script/linux/install_build_deps`. If the checkout
 sits on a network or VM share, set `CARGO_TARGET_DIR` to a local path first — building
 into a share is slow, and if that share is also a Windows checkout it mixes two

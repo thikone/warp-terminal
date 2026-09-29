@@ -12,8 +12,10 @@
 RELEASE_TAG_BARE='v0\.[0-9]{4}\.[0-9]{2}\.[0-9]{2}\.[0-9]{2}\.[0-9]{2}\.terminal_[0-9]{2}'
 RELEASE_TAG_RE="^${RELEASE_TAG_BARE}\$"
 
+# Bash regex rather than `printf | grep -q`: that pipeline races against pipefail,
+# because grep exits on the first match and printf then dies of SIGPIPE.
 is_release_tag() {
-    printf '%s' "${1:-}" | grep -Eq "$RELEASE_TAG_RE"
+    [[ ${1:-} =~ ^${RELEASE_TAG_BARE}$ ]]
 }
 
 # Release tags reachable from HEAD, oldest first.
@@ -51,7 +53,12 @@ next_release_tag() {
 binary_release_tag() {
     local bin="${1:?binary_release_tag needs a path}" reported
     reported="$("$bin" --version 2>&1 || true)"
-    printf '%s' "$reported" | grep -Eo "$RELEASE_TAG_BARE" | head -1
+    if [[ $reported =~ $RELEASE_TAG_BARE ]]; then
+        printf '%s' "${BASH_REMATCH[0]}"
+    fi
+    # Absent a tag the caller reports it; a non-zero status here would instead
+    # abort the caller's `set -e` before it could say anything useful.
+    return 0
 }
 
 # sha256 of a file, on either platform.
