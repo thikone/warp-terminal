@@ -389,6 +389,26 @@ portable folder runs without them.
 
 ## Building (Windows)
 
+Two scripts wrap everything below. Prefer them — the flags are easy to get wrong,
+and getting them wrong produces a binary that looks fine on the build machine and
+is broken everywhere else.
+
+```powershell
+.\script\windows\build-portable.ps1            # derives the next tag and builds
+.\script\windows\package-release.ps1           # zips it, hashes it, writes notes
+.\script\windows\package-release.ps1 -Build    # both in one step
+```
+
+`build-portable.ps1` refuses to finish unless the linked binary reports the tag it
+was asked for and links as PE subsystem 2, which is the only direct evidence that
+`release_bundle` applied. `package-release.ps1` takes the version from the exe
+rather than a parameter, so an archive cannot claim a version the binary does not
+have; it audits the staged folder for user data before archiving, and asks
+`claude` to write the release notes from the commits since the previous release
+tag. Neither script creates a tag or pushes anything.
+
+The rest of this section is what those scripts do, and why.
+
 Prerequisites: Rust 1.92.0 (pinned by `rust-toolchain.toml`), VS Build Tools with
 the MSVC toolchain and a Windows SDK, CMake, protoc, NASM. **LLVM/libclang is not
 needed** — `bindgen` only runs when the target OS is macOS
