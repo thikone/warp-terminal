@@ -416,6 +416,19 @@ fn test_theme_chooser_does_not_suppress_tab_bar_traffic_light_padding() {
     });
 }
 
+/// A maximized or fullscreen window's top edge is the screen's, so the tab strip has to be
+/// reachable by slamming the pointer upwards. An inset above it puts the topmost row of pixels
+/// outside every tab's hit rect, and the click lands in the titlebar drag fallback instead.
+#[test]
+fn maximized_and_fullscreen_windows_drop_the_top_inset() {
+    assert_eq!(
+        workspace_top_padding(FullscreenState::Normal),
+        WORKSPACE_PADDING
+    );
+    assert_eq!(workspace_top_padding(FullscreenState::Maximized), 0.);
+    assert_eq!(workspace_top_padding(FullscreenState::Fullscreen), 0.);
+}
+
 /// The Warp Drive and Agent conversations tabs are removed in this fork. Their
 /// `ToolPanelView` variants survive so persisted tab state still maps, so this
 /// guards the thing that could regress: neither may ever be offered as a tab,

@@ -543,6 +543,18 @@ use crate::{
 /// The padding that should be applied to the workspace as a whole.
 pub const WORKSPACE_PADDING: f32 = 1.0;
 
+/// The workspace's top inset, dropped when the window's top edge is the screen's.
+///
+/// There the pointer can be slammed to the top of the screen to reach the tab strip, so an inset
+/// above it reads as tabs refusing the click: the click misses every tab and falls through to the
+/// titlebar drag fallback instead.
+fn workspace_top_padding(fullscreen_state: FullscreenState) -> f32 {
+    match fullscreen_state {
+        FullscreenState::Maximized | FullscreenState::Fullscreen => 0.,
+        FullscreenState::Normal => WORKSPACE_PADDING,
+    }
+}
+
 /// The minimum font size at which terminal text will be rendered.
 const MIN_FONT_SIZE: f32 = 5.0;
 
@@ -26358,9 +26370,16 @@ impl View for Workspace {
             }
         }
 
+        let fullscreen_state = app
+            .windows()
+            .platform_window(self.window_id)
+            .map(|window| window.fullscreen_state())
+            .unwrap_or_default();
+
         stack.add_child(
             Container::new(panels)
                 .with_uniform_padding(WORKSPACE_PADDING)
+                .with_padding_top(workspace_top_padding(fullscreen_state))
                 .finish(),
         );
 

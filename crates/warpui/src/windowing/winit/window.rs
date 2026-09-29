@@ -985,17 +985,18 @@ impl Window {
             return;
         };
 
-        // Windows are not drag-resizable when maximized.
-        let drag_resize_direction = if inner.window.is_maximized() {
-            None
-        } else {
-            let scale_factor = inner.window.scale_factor();
-            Self::drag_resize_direction_at_position(
-                inner.physical_size().to_logical(scale_factor),
-                position,
-                DRAG_RESIZE_MARGIN,
-            )
-        };
+        // Windows are not drag-resizable when maximized or fullscreen.
+        let drag_resize_direction =
+            if inner.window.is_maximized() || inner.window.fullscreen().is_some() {
+                None
+            } else {
+                let scale_factor = inner.window.scale_factor();
+                Self::drag_resize_direction_at_position(
+                    inner.physical_size().to_logical(scale_factor),
+                    position,
+                    DRAG_RESIZE_MARGIN,
+                )
+            };
 
         if let Some(resize_direction) = &drag_resize_direction {
             inner
