@@ -450,6 +450,51 @@ archive, otherwise the exe trips SmartScreen on first run.
 
 ---
 
+## Building (Linux and macOS)
+
+```bash
+script/portable/build-portable.sh            # derives the next tag and builds
+script/portable/package-release.sh           # stages and archives it
+script/portable/package-release.sh --build   # both in one step
+```
+
+Same contract as the Windows pair: the build script owns the flags and verifies them
+against the linked binary, and the package script reads the tag out of the binary
+rather than taking it as an argument. Artifacts are
+`warp-terminal-<tag>-linux-x64.tar.gz` and `warp-terminal-<tag>-macos-arm64.tar.gz`,
+each holding the binary, a `data/` marker, and on Linux an optional `install.sh`
+that adds a desktop entry and icon under `$HOME`.
+
+Three differences from the Windows build, all deliberate:
+
+- **No `gui` feature.** `gui = ["voice_input"]` does not gate the GUI front-end, so a
+  terminal-only build has no use for it, and leaving it out keeps ALSA off the
+  runtime dependency list. `release_bundle` is still required, for `debug-embed`.
+- **`CARGO_PROFILE_RLTO_DEBUG=0`.** ThinLTO with debuginfo needs more than 16 GB and
+  the final `rustc` gets OOM-killed — on a 16 GB VM and on GitHub's runners alike.
+  Line tables are the dominant consumer. The cost is that panics on these platforms
+  carry addresses rather than `file:line`; Windows keeps `debug = 1`.
+- **macOS binaries are ad-hoc codesigned** (`codesign --sign -`). An unsigned arm64
+  Mach-O is killed by the kernel, so this is required rather than cosmetic. Only the
+  binary is signed and no bundle resources are sealed, so the app writing into a
+  sibling `data/` at runtime cannot invalidate the signature. No `.app` is produced:
+  `app/src/bin/oss.rs` embeds its own `Info.plist` through `embed_plist`, so the bare
+  binary already carries `CFBundleIdentifier` and the rest.
+
+Linux build dependencies come from `script/linux/install_build_deps`. If the checkout
+sits on a network or VM share, set `CARGO_TARGET_DIR` to a local path first — building
+into a share is slow, and if that share is also a Windows checkout it mixes two
+platforms' artifacts in one profile directory.
+
+`.github/workflows/build-portable.yml` runs both on `ubuntu-24.04` and `macos-14`, on
+a pushed `v0.*.terminal_*` tag or on manual dispatch. Windows is not in CI: the local
+PowerShell script already does it in about twelve minutes with a warm cache.
+
+Building on Ubuntu 24.04 rather than 26.04 is deliberate — the older glibc means the
+artifact also runs on newer distributions, which the reverse would not.
+
+---
+
 ## Known limitations
 
 - **Session history is per-session.** It reads the live block list, so it does not

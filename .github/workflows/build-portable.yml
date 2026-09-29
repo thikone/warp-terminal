@@ -1,0 +1,133 @@
+# Build the portable terminal-only artifacts for Linux and macOS.
+#
+# Windows is not built here: script/windows/build-portable.ps1 already does it
+# locally in ~12 minutes, faster than a runner and with a warm cache.
+#
+# Both jobs pass --skip-verify to the build script and check the version
+# themselves, because a GUI binary on a headless runner is only safe to invoke
+# for --version, and on Linux even that is done without a display.
+name: build-portable
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to embed (default: next unused tag for today)"
+        required: false
+        type: string
+  push:
+    tags:
+      - "v0.*.terminal_*"
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Tag derivation reads the existing release tags, and the packaging
+          # step reports unpushed commits, so a shallow clone will not do.
+          fetch-depth: 0
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          # Deliberately not script/linux/install_build_deps: that also pulls
+          # musl-tools, clang-format and brotli for presubmit and wasm work this
+          # build does not do, and it installs rustup, which the runner has.
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake pkg-config \
+            libssl-dev libfreetype-dev libexpat1-dev libgit2-dev \
+            libfontconfig1-dev libasound2-dev libclang-dev
+          PROTOC_VERSION=25.1
+          curl -fsSL -o /tmp/protoc.zip \
+            "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-linux-x86_64.zip"
+          sudo unzip -o /tmp/protoc.zip -d /usr/local bin/protoc 'include/*'
+          protoc --version
+
+      # rust-toolchain.toml pins the version, so this only needs to exist.
+      - name: Show toolchain
+        run: rustc --version && cargo --version
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: portable-linux
+          # The rlto profile is what ships; caching dev artifacts would only
+          # inflate the cache without speeding this job up.
+          cache-targets: "true"
+
+      - name: Build
+        run: |
+          script/portable/build-portable.sh \
+            ${{ inputs.tag && format('--tag {0}', inputs.tag) || '' }} \
+            --skip-verify
+
+      - name: Verify the embedded tag
+        run: |
+          # No display is needed for --version, but be explicit: a GUI binary
+          # that tried to open one on a headless runner would hang rather than fail.
+          reported="$(target/rlto/warp-oss --version)"
+          echo "$reported"
+          echo "$reported" | grep -Eq 'v0\.[0-9]{4}\.[0-9]{2}\.[0-9]{2}\.[0-9]{2}\.[0-9]{2}\.terminal_[0-9]{2}'
+
+      - name: Package
+        run: script/portable/package-release.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: warp-terminal-linux-x64
+          path: build/pkg-*/warp-terminal-*-linux-x64.tar.gz
+          if-no-files-found: error
+          # Already a gzip tarball; letting Actions zip it again would double the
+          # transfer for no benefit.
+          compression-level: 0
+
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install build dependencies
+        run: |
+          # cmake and the Xcode command line tools (which supply cc and libclang,
+          # needed because bindgen only runs on macOS) are preinstalled.
+          brew install protobuf
+          protoc --version
+
+      - name: Show toolchain
+        run: rustc --version && cargo --version
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: portable-macos
+          cache-targets: "true"
+
+      - name: Build
+        run: |
+          script/portable/build-portable.sh \
+            ${{ inputs.tag && format('--tag {0}', inputs.tag) || '' }} \
+            --skip-verify
+
+      - name: Verify signature and embedded tag
+        run: |
+          # An unsigned arm64 Mach-O is killed by the kernel, so this also proves
+          # the ad-hoc signature the build script applies actually took.
+          codesign --verify --strict --verbose=2 target/rlto/warp-oss
+          reported="$(target/rlto/warp-oss --version)"
+          echo "$reported"
+          echo "$reported" | grep -Eq 'v0\.[0-9]{4}\.[0-9]{2}\.[0-9]{2}\.[0-9]{2}\.[0-9]{2}\.terminal_[0-9]{2}'
+
+      - name: Package
+        run: script/portable/package-release.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: warp-terminal-macos-arm64
+          path: build/pkg-*/warp-terminal-*-macos-arm64.tar.gz
+          if-no-files-found: error
+          compression-level: 0
