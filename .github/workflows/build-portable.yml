@@ -59,11 +59,27 @@ jobs:
           # inflate the cache without speeding this job up.
           cache-targets: "true"
 
-      - name: Build
+      - name: Resolve the release tag
+        id: tag
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          script/portable/build-portable.sh \
-            ${{ inputs.tag && format('--tag {0}', inputs.tag) || '' }} \
-            --skip-verify
+          if [ -n "$INPUT_TAG" ]; then
+            tag="$INPUT_TAG"
+          elif [ "$REF_TYPE" = tag ]; then
+            # The artifacts must carry the tag that triggered the run. Deriving
+            # one here would embed a version the tag does not name.
+            tag="$REF_NAME"
+          else
+            tag=""
+          fi
+          echo "arg=${tag:+--tag $tag}" >> "$GITHUB_OUTPUT"
+          echo "Building ${tag:-<derived>}"
+
+      - name: Build
+        run: script/portable/build-portable.sh ${{ steps.tag.outputs.arg }} --skip-verify
 
       - name: Verify the embedded tag
         run: |
@@ -107,11 +123,27 @@ jobs:
           key: portable-macos
           cache-targets: "true"
 
-      - name: Build
+      - name: Resolve the release tag
+        id: tag
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          script/portable/build-portable.sh \
-            ${{ inputs.tag && format('--tag {0}', inputs.tag) || '' }} \
-            --skip-verify
+          if [ -n "$INPUT_TAG" ]; then
+            tag="$INPUT_TAG"
+          elif [ "$REF_TYPE" = tag ]; then
+            # The artifacts must carry the tag that triggered the run. Deriving
+            # one here would embed a version the tag does not name.
+            tag="$REF_NAME"
+          else
+            tag=""
+          fi
+          echo "arg=${tag:+--tag $tag}" >> "$GITHUB_OUTPUT"
+          echo "Building ${tag:-<derived>}"
+
+      - name: Build
+        run: script/portable/build-portable.sh ${{ steps.tag.outputs.arg }} --skip-verify
 
       - name: Verify signature and embedded tag
         run: |
