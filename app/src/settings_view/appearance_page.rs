@@ -285,15 +285,6 @@ pub fn init_actions_from_parent_view<T: Action + Clone>(
     ));
 
     toggle_binding_pairs.push(ToggleSettingActionPair::new(
-        "agent font matching terminal font",
-        builder(SettingsAction::AppearancePageToggle(
-            AppearancePageAction::ToggleMatchAIToTerminalFontFamily,
-        )),
-        context,
-        flags::MATCH_AI_FONT_TO_TERMINAL_FONT_FLAG,
-    ));
-
-    toggle_binding_pairs.push(ToggleSettingActionPair::new(
         "notebook font size matching terminal font size",
         builder(SettingsAction::AppearancePageToggle(
             AppearancePageAction::ToggleMatchNotebookToMonospaceFontSize,
@@ -427,14 +418,6 @@ pub fn init_actions_from_parent_view<T: Action + Clone>(
             )),
             context,
             flags::SHOW_VERTICAL_TAB_PANEL_IN_RESTORED_WINDOWS_FLAG,
-        ));
-        toggle_binding_pairs.push(ToggleSettingActionPair::new(
-            "latest user prompt as conversation title in tab names",
-            builder(SettingsAction::AppearancePageToggle(
-                AppearancePageAction::ToggleUseLatestUserPromptAsConversationTitleInTabNames,
-            )),
-            context,
-            flags::USE_LATEST_USER_PROMPT_AS_CONVERSATION_TITLE_IN_TAB_NAMES_FLAG,
         ));
     }
 

@@ -30,7 +30,7 @@ use warpui::elements::{
     SizeConstraintCondition, SizeConstraintSwitch, Stack, Text, resizable_state_handle,
 };
 use warpui::fonts::{Properties, Style, Weight};
-use warpui::keymap::{EditableBinding, Keystroke};
+use warpui::keymap::Keystroke;
 use warpui::platform::{Cursor, OperatingSystem};
 use warpui::ui_components::components::{Coords, UiComponent, UiComponentStyles};
 use warpui::{
@@ -161,16 +161,6 @@ pub fn init(app: &mut AppContext) {
                 & id!(HAS_PENDING_NON_TRANSFER_CONTROL_ACTION_CONTEXT_KEY),
         ),
     ]);
-    app.register_editable_bindings([EditableBinding::new(
-        SET_INPUT_MODE_TERMINAL_ACTION_NAME,
-        "Take control of running command",
-        CLISubagentAction::TakeControlOfRunningCommand,
-    )
-    .with_mac_key_binding("cmd-i")
-    .with_linux_or_windows_key_binding("ctrl-i")
-    .with_context_predicate(
-        id!(CLISubagentView::ui_name()) & id!(HAS_PENDING_CLI_ACTION_CONTEXT_KEY),
-    )]);
 }
 
 #[derive(Default)]
@@ -547,13 +537,6 @@ impl CLISubagentView {
         );
     }
 
-    fn take_control_of_running_command(&mut self, ctx: &mut ViewContext<Self>) {
-        if self.has_pending_transfer_control_action(ctx) {
-            self.handle_execute_blocked_action(false, ctx);
-        } else {
-            self.handle_reject_blocked_action(true, ctx);
-        }
-    }
     fn reject_blocked_action(&mut self, should_user_take_over: bool, ctx: &mut ViewContext<Self>) {
         let Some(blocked_action) = self.model.blocked_action(&self.action_model, ctx) else {
             return;
@@ -1452,7 +1435,6 @@ pub enum CLISubagentAction {
     ExecuteBlockedAction,
     ExecuteAndAutoApprove,
     RejectBlockedAction { should_user_take_over: bool },
-    TakeControlOfRunningCommand,
     ToggleAllowMenu,
     ToggleAlwaysAllowWriteToPty,
     ToggleAlwaysAllowReadFiles,
@@ -1493,9 +1475,6 @@ impl TypedActionView for CLISubagentView {
                 should_user_take_over,
             } => {
                 self.handle_reject_blocked_action(*should_user_take_over, ctx);
-            }
-            CLISubagentAction::TakeControlOfRunningCommand => {
-                self.take_control_of_running_command(ctx);
             }
             CLISubagentAction::ToggleAllowMenu => {
                 self.toggle_allow_menu(ctx);

@@ -15,7 +15,7 @@ use warpui::elements::{
     ResizableStateHandle, SavePosition, Shrinkable, Stack, Text, resizable_state_handle,
 };
 use warpui::fonts::Properties;
-use warpui::keymap::{EditableBinding, FixedBinding};
+use warpui::keymap::FixedBinding;
 use warpui::platform::Cursor;
 use warpui::presenter::ChildView;
 use warpui::ui_components::button::ButtonVariant;
@@ -46,7 +46,7 @@ use crate::server::telemetry::{TelemetryEvent, WarpAIActionType};
 use crate::terminal::resizable_data::{DEFAULT_WARP_AI_WIDTH, ModalType, ResizableData};
 use crate::ui_components::blended_colors;
 use crate::ui_components::buttons::icon_button;
-use crate::util::bindings::{CustomAction, cmd_or_ctrl_shift};
+use crate::util::bindings::CustomAction;
 use crate::workspace::{ActiveSession, TAB_BAR_HEIGHT};
 use crate::workspaces::user_workspaces::UserWorkspaces;
 
@@ -150,30 +150,6 @@ pub fn init(app: &mut AppContext) {
         "Close Warp AI",
         id!("AIAssistantPanel"),
     )]);
-
-    app.register_editable_bindings([
-        EditableBinding::new(
-            "ai_assistant_panel:focus_terminal_input",
-            "Focus Terminal Input From Warp AI",
-            AIAssistantAction::FocusTerminalInput,
-        )
-        .with_context_predicate(id!("AIAssistantPanel"))
-        .with_key_binding(cmd_or_ctrl_shift("l")),
-        EditableBinding::new(
-            "ai_assistant_panel:reset_context",
-            "Restart Warp AI",
-            AIAssistantAction::ResetContext,
-        )
-        .with_context_predicate(id!("AIAssistantPanel"))
-        .with_key_binding("ctrl-l"),
-        EditableBinding::new(
-            "ai_assistant_panel:reset_context",
-            "Restart Warp AI",
-            AIAssistantAction::ResetContext,
-        )
-        .with_context_predicate(id!("AIAssistantPanel"))
-        .with_key_binding(cmd_or_ctrl_shift("k")),
-    ]);
 }
 
 impl AIAssistantPanelView {

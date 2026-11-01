@@ -39,7 +39,7 @@ use warpui::elements::{
     SavePosition, ScrollTarget, ScrollToPositionMode, ScrollbarWidth, Shrinkable,
     SizeConstraintCondition, SizeConstraintSwitch, Stack, Text,
 };
-use warpui::keymap::{EditableBinding, FixedBinding, Keystroke};
+use warpui::keymap::{FixedBinding, Keystroke};
 use warpui::platform::{Cursor, OperatingSystem};
 use warpui::ui_components::components::{Coords, UiComponent, UiComponentStyles};
 use warpui::{
@@ -105,7 +105,7 @@ use crate::view_components::compactible_action_button::{
 };
 use crate::view_components::compactible_split_action_button::CompactibleSplitActionButton;
 use crate::workspace::ToastStack;
-use crate::{TelemetryEvent, cmd_or_ctrl_shift, send_telemetry_from_ctx};
+use crate::{TelemetryEvent, send_telemetry_from_ctx};
 
 const REQUESTED_EDIT_CANCEL_LABEL: &str = "Cancel";
 const REQUESTED_EDIT_REFINE_LABEL: &str = "Refine";
@@ -193,14 +193,6 @@ pub fn init(app: &mut AppContext) {
             id!(CodeDiffView::ui_name()) & !id!(DISPATCHED_REQUESTED_EDIT_EXPANDED),
         ),
     ]);
-
-    app.register_editable_bindings([EditableBinding::new(
-        EDIT_REQUESTED_EDIT_NAME,
-        "Edit Code Diff",
-        CodeDiffViewAction::Edit,
-    )
-    .with_context_predicate(id!(CodeDiffView::ui_name()) & !id!(DISPATCHED_REQUESTED_EDIT_EXPANDED))
-    .with_key_binding(cmd_or_ctrl_shift("e"))]);
 }
 
 #[derive(Default, Clone)]

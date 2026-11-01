@@ -22,7 +22,7 @@ use warpui::elements::{
     PositionedElementOffsetBounds, Radius, ScrollbarWidth, SelectableArea, SelectionHandle, Stack,
     Text,
 };
-use warpui::keymap::{Context, EditableBinding, FixedBinding, Keystroke};
+use warpui::keymap::{Context, FixedBinding, Keystroke};
 use warpui::ui_components::components::UiComponent as _;
 use warpui::{
     AppContext, Element, Entity, EntityId, EventContext, ModelHandle, SingletonEntity,
@@ -56,7 +56,6 @@ use crate::ai::blocklist::{
     ClientIdentifiers,
 };
 use crate::ai::mcp::TemplatableMCPServerManager;
-use crate::cmd_or_ctrl_shift;
 use crate::code::editor::view::{CodeEditorEvent, CodeEditorRenderOptions, CodeEditorView};
 use crate::editor::InteractionState;
 use crate::menu::{Event as MenuEvent, Menu, MenuItem, MenuItemFields, MenuVariant};
@@ -170,18 +169,6 @@ pub fn init(app: &mut AppContext) {
                 & id!(EDIT_MODE_OPEN_KEYMAP_CONTEXT),
         ),
     ]);
-
-    app.register_editable_bindings([EditableBinding::new(
-        EDIT_COMMAND_ACTION_NAME,
-        "Edit requested command",
-        RequestedCommandViewAction::OpenEditMode,
-    )
-    .with_key_binding(cmd_or_ctrl_shift("e"))
-    .with_context_predicate(
-        id!(RequestedCommandView::ui_name())
-            & id!(REQUESTED_ACTION_BLOCKED_KEYMAP_CONTEXT)
-            & !id!(EDIT_MODE_OPEN_KEYMAP_CONTEXT),
-    )]);
 }
 
 /// Structured representation of an MCP tool call request for JSON tree rendering.

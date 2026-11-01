@@ -26,6 +26,7 @@ Upstream licensing is unchanged: `warpui_core` and `warpui` are MIT
 | Version | Tagged `…​.terminal_NN` instead of `…​.stable_NN` |
 | File capture | Cloud "Share block/session" replaced by six commands that save or live-stream output to a local file |
 | Tool panel | Agent conversations and Warp Drive tabs removed; a Session history tab added in their place |
+| Menus and shortcuts | AI, Warp Drive and cloud sharing items removed from the macOS menu bar, and their shortcuts and palette commands removed on every platform |
 
 Only the **`warp-oss`** binary is buildable from this tree. The `stable`, `preview`,
 `dev` and `local` binaries call `warp_channel_config::load_config!`, which shells out

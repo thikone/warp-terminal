@@ -34,7 +34,7 @@ use warpui::ui_components::components::{Coords, UiComponent, UiComponentStyles};
 use warpui::ui_components::switch::{SwitchStateHandle, TooltipConfig};
 use warpui::{
     Action, AppContext, Entity, ModelHandle, SingletonEntity, TypedActionView, View, ViewContext,
-    ViewHandle, id,
+    ViewHandle,
 };
 
 #[cfg(feature = "local_fs")]
@@ -935,32 +935,6 @@ pub fn init_actions_from_parent_view<T: Action + Clone>(
     context: &ContextPredicate,
     builder: fn(SettingsAction) -> T,
 ) {
-    if FeatureFlag::FullSourceCodeEmbedding.is_enabled() {
-        ToggleSettingActionPair::add_toggle_setting_action_pairs_as_bindings(
-            vec![ToggleSettingActionPair::new(
-                "codebase index",
-                builder(SettingsAction::Code(
-                    CodeSettingsPageAction::ToggleCodebaseContext,
-                )),
-                &(context.clone() & id!(flags::IS_ANY_AI_ENABLED)),
-                flags::IS_CODEBASE_INDEXING_ENABLED,
-            )],
-            app,
-        );
-
-        ToggleSettingActionPair::add_toggle_setting_action_pairs_as_bindings(
-            vec![ToggleSettingActionPair::new(
-                "auto-indexing",
-                builder(SettingsAction::Code(
-                    CodeSettingsPageAction::ToggleAutoIndexing,
-                )),
-                &(context.clone() & id!(flags::IS_CODEBASE_INDEXING_ENABLED)),
-                flags::IS_AUTOINDEXING_ENABLED,
-            )],
-            app,
-        );
-    }
-
     if FeatureFlag::OpenWarpNewSettingsModes.is_enabled() {
         ToggleSettingActionPair::add_toggle_setting_action_pairs_as_bindings(
             vec![

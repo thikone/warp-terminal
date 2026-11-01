@@ -13,7 +13,7 @@ use warpui::elements::{
     MainAxisAlignment, MainAxisSize, MouseStateHandle, OffsetPositioning, ParentElement,
     PositionedElementAnchor, PositionedElementOffsetBounds, SavePosition, Stack,
 };
-use warpui::keymap::{EditableBinding, FixedBinding};
+use warpui::keymap::FixedBinding;
 use warpui::text_layout::ClipConfig;
 use warpui::ui_components::button::ButtonTooltipPosition;
 use warpui::ui_components::components::UiComponent;
@@ -62,16 +62,6 @@ use crate::workspace::ToastStack;
 use crate::{BlocklistAIHistoryModel, send_telemetry_from_ctx};
 
 pub fn init(app: &mut AppContext) {
-    app.register_editable_bindings([EditableBinding::new(
-        // Reuse the save file keybinding name and description
-        // so that there's only one entry in settings reused for both cases.
-        SAVE_FILE_BINDING_NAME,
-        SAVE_FILE_BINDING_DESCRIPTION,
-        AIDocumentAction::SendUpdatedPlan,
-    )
-    .with_context_predicate(id!("AIDocumentView") & !id!("IMEOpen"))
-    .with_key_binding("cmdorctrl-s")]);
-
     // Allow closing the AI document pane with the same toggle keybinding used in Terminal
     app.register_fixed_bindings([FixedBinding::new(
         "cmdorctrl-alt-p",
@@ -89,7 +79,7 @@ use warp_util::path::LineAndColumnArg;
 #[cfg(feature = "local_fs")]
 use crate::code::editor_management::CodeSource;
 // Import keybinding constants from code view to ensure consistency
-use crate::code::view::{SAVE_FILE_BINDING_DESCRIPTION, SAVE_FILE_BINDING_NAME};
+use crate::code::view::SAVE_FILE_BINDING_NAME;
 use crate::notebooks::file::MarkdownDisplayMode;
 #[cfg(feature = "local_fs")]
 use crate::util::file::external_editor::settings::EditorLayout;

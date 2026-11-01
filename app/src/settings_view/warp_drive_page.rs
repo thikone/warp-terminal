@@ -5,22 +5,16 @@ use warpui::elements::{
     Container, Element, Flex, MouseStateHandle, ParentElement, Shrinkable, Text,
 };
 use warpui::fonts::Weight;
-use warpui::keymap::ContextPredicate;
 use warpui::ui_components::button::ButtonVariant;
 use warpui::ui_components::components::{Coords, UiComponent, UiComponentStyles};
 use warpui::ui_components::switch::SwitchStateHandle;
-use warpui::{
-    Action, AppContext, Entity, SingletonEntity, TypedActionView, View, ViewContext, ViewHandle, id,
-};
+use warpui::{AppContext, Entity, SingletonEntity, TypedActionView, View, ViewContext, ViewHandle};
 
 use super::settings_page::{
     AdditionalInfo, MatchData, PageType, SettingsPageMeta, SettingsPageViewHandle, SettingsWidget,
     render_body_item,
 };
-use super::{
-    LocalOnlyIconState, SettingActionPairContexts, SettingActionPairDescriptions, SettingsAction,
-    SettingsSection, ToggleSettingActionPair, ToggleState, flags,
-};
+use super::{LocalOnlyIconState, SettingsSection, ToggleState};
 use crate::appearance::Appearance;
 use crate::auth::AuthStateProvider;
 use crate::auth::auth_manager::{AuthManager, AuthManagerEvent};
@@ -31,30 +25,6 @@ pub enum WarpDriveSettingsPageAction {
     ToggleShowWarpDrive,
     SignUp,
     OpenUrl(String),
-}
-
-pub fn init_actions_from_parent_view<T: Action + Clone>(
-    app: &mut AppContext,
-    context: &ContextPredicate,
-    builder: fn(SettingsAction) -> T,
-) {
-    ToggleSettingActionPair::add_toggle_setting_action_pairs_as_bindings(
-        vec![
-            ToggleSettingActionPair::custom(
-                SettingActionPairDescriptions::new("Enable Warp Drive", "Disable Warp Drive"),
-                builder(SettingsAction::WarpDrive(
-                    WarpDriveSettingsPageAction::ToggleShowWarpDrive,
-                )),
-                SettingActionPairContexts::new(
-                    context.clone() & !id!(flags::ENABLE_WARP_DRIVE) & !id!("IsAnonymousUser"),
-                    context.clone() & id!(flags::ENABLE_WARP_DRIVE) & !id!("IsAnonymousUser"),
-                ),
-                None,
-            )
-            .with_enabled(|| FeatureFlag::OpenWarpNewSettingsModes.is_enabled()),
-        ],
-        app,
-    );
 }
 
 pub enum WarpDriveSettingsPageEvent {

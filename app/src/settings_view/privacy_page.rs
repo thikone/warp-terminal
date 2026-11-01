@@ -27,7 +27,7 @@ use warpui::ui_components::components::{Coords, UiComponent, UiComponentStyles};
 use warpui::ui_components::switch::{SwitchStateHandle, TooltipConfig};
 use warpui::{
     Action, AppContext, Element, Entity, ModelHandle, SingletonEntity, TypedActionView,
-    UpdateModel, View, ViewContext, ViewHandle, id,
+    UpdateModel, View, ViewContext, ViewHandle,
 };
 
 use super::privacy::{AddRegexModal, AddRegexModalEvent};
@@ -1991,20 +1991,6 @@ pub fn init_actions_from_parent_view<T: Action + Clone>(
         context,
         flags::SAFE_MODE_FLAG,
     ));
-
-    toggle_binding_pairs.push(
-        ToggleSettingActionPair::new(
-            "cloud AI conversation storage",
-            builder(SettingsAction::PrivacyPageToggle(
-                PrivacyPageAction::ToggleCloudConversationStorage,
-            )),
-            &(context.clone()
-                & id!(flags::IS_ANY_AI_ENABLED)
-                & id!(flags::CLOUD_CONVERSATION_STORAGE_EDITABLE_FLAG)),
-            flags::CLOUD_CONVERSATION_STORAGE_FLAG,
-        )
-        .with_enabled(|| FeatureFlag::CloudConversations.is_enabled()),
-    );
 
     ToggleSettingActionPair::add_toggle_setting_action_pairs_as_bindings(toggle_binding_pairs, app);
 }

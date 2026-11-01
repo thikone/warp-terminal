@@ -338,21 +338,6 @@ pub fn init_actions_from_parent_view<T: Action + Clone>(
     );
     toggle_binding_pairs.push(
         ToggleSettingActionPair::new(
-            "agent task completion notifications",
-            builder(SettingsAction::FeaturesPageToggle(
-                FeaturesPageAction::ToggleAgentTaskCompletedNotifications,
-            )),
-            &(context.to_owned() & id!(flags::NOTIFICATIONS_CONTEXT_FLAG)),
-            flags::AGENT_TASK_COMPLETED_NOTIFICATIONS_FLAG,
-        )
-        .is_supported_on_current_platform(
-            SessionSettings::as_ref(app)
-                .notifications
-                .is_supported_on_current_platform(),
-        ),
-    );
-    toggle_binding_pairs.push(
-        ToggleSettingActionPair::new(
             "needs-attention notifications",
             builder(SettingsAction::FeaturesPageToggle(
                 FeaturesPageAction::ToggleNeedsAttentionNotifications,
@@ -381,17 +366,6 @@ pub fn init_actions_from_parent_view<T: Action + Clone>(
                 .notifications
                 .is_supported_on_current_platform(),
         ),
-    );
-    toggle_binding_pairs.push(
-        ToggleSettingActionPair::new(
-            "in-app agent notifications",
-            builder(SettingsAction::FeaturesPageToggle(
-                FeaturesPageAction::ToggleAgentInAppNotifications,
-            )),
-            context,
-            flags::AGENT_IN_APP_NOTIFICATIONS_FLAG,
-        )
-        .with_enabled(|| FeatureFlag::HOANotifications.is_enabled()),
     );
 
     toggle_binding_pairs.push(
@@ -628,23 +602,6 @@ pub fn init_actions_from_parent_view<T: Action + Clone>(
             .is_supported_on_current_platform(
                 InputSettings::as_ref(app)
                     .enable_slash_commands_in_terminal
-                    .is_supported_on_current_platform(),
-            ),
-        );
-    }
-    if FeatureFlag::AIContextMenuCode.is_enabled() {
-        toggle_binding_pairs.push(
-            ToggleSettingActionPair::new(
-                "codebase symbols in the '@' context menu",
-                builder(SettingsAction::FeaturesPageToggle(
-                    FeaturesPageAction::ToggleOutlineCodebaseSymbolsForAtContextMenu,
-                )),
-                context,
-                flags::OUTLINE_CODEBASE_SYMBOLS_FOR_AT_CONTEXT_MENU_FLAG,
-            )
-            .is_supported_on_current_platform(
-                InputSettings::as_ref(app)
-                    .outline_codebase_symbols_for_at_context_menu
                     .is_supported_on_current_platform(),
             ),
         );
