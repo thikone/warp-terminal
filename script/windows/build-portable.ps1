@@ -64,6 +64,14 @@ try {
         throw 'protoc not found. Install it (winget install Google.Protobuf) or set $env:PROTOC.'
     }
 
+    $cargo = Resolve-Cargo
+    if (-not $cargo) {
+        throw 'cargo not found on PATH or in ~\.cargo\bin. Install Rust (https://rustup.rs) or add it to PATH.'
+    }
+    # Child processes -- build scripts, rustc, the linker driver -- look cargo's
+    # neighbours up on PATH, so putting its directory there is not redundant.
+    $env:PATH = (Split-Path $cargo) + [IO.Path]::PathSeparator + $env:PATH
+
     $env:PROTOC             = $protoc
     $env:CARGO_FULL_PROFILE = $BuildProfile
     $env:CARGO_BIN_NAME     = $Channel
@@ -74,10 +82,11 @@ try {
     Write-Host "  profile  $BuildProfile"
     Write-Host "  channel  $Channel"
     Write-Host "  protoc   $protoc"
+    Write-Host "  cargo    $cargo"
     Write-Host ''
 
     $started = Get-Date
-    cargo build -p warp --profile $BuildProfile --bin warp-oss --features release_bundle,gui
+    & $cargo build -p warp --profile $BuildProfile --bin warp-oss --features release_bundle,gui
     if ($LASTEXITCODE -ne 0) { throw "cargo build failed with exit code $LASTEXITCODE." }
 
     $exe = Join-Path $RepoRoot "target\$BuildProfile\warp-oss.exe"

@@ -94,6 +94,22 @@ function Resolve-Protoc {
     return $null
 }
 
+function Resolve-Cargo {
+    <#
+    rustup's shims live in ~\.cargo\bin, which is on an interactive shell's PATH
+    but not necessarily on that of a non-interactive or service-launched one. Fall
+    back to the default location rather than failing at the cargo invocation with
+    "not recognized", which says nothing about the cause.
+    #>
+    $onPath = Get-Command cargo -ErrorAction SilentlyContinue
+    if ($onPath) { return $onPath.Source }
+
+    $default = Join-Path $env:USERPROFILE '.cargo\bin\cargo.exe'
+    if (Test-Path $default) { return $default }
+
+    return $null
+}
+
 function Assert-WarpNotRunning {
     <#
     app/build.rs stages conpty.dll, dxcompiler.dll, dxil.dll and OpenConsole.exe
