@@ -4,7 +4,7 @@ use parking_lot::Mutex;
 use pathfinder_geometry::rect::RectF;
 use pathfinder_geometry::vector::Vector2F;
 
-use super::new_scrollable::util::scroll_delta_for_axis;
+use super::new_scrollable::util::{position_within_child, scroll_delta_for_axis};
 use super::{
     Axis, F32Ext, Fill, Point, ScrollData, ScrollStateHandle, Scrollable, ScrollableElement,
     ScrollbarWidth, Selection, Vector2FExt,
@@ -329,7 +329,7 @@ impl ClippedScrollable {
             let child_bounds = self.child.bounds().expect("bounds on child should be set");
             // It doesn't make sense to scroll to a position that is unrelated to the `ClippedScrollable`
             // so no-op if it is not within the bounds of the child element.
-            if child_bounds.contains_rect(position_bounds) {
+            if position_within_child(child_bounds, position_bounds) {
                 let scroll_top = self.state.scroll_start();
                 let viewport_bounds = self.bounds().expect("bounds should be set");
 

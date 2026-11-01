@@ -128,6 +128,30 @@ pub(super) fn adjust_scroll_delta_with_sensitivity_config(
 /// - [`ScrollToPositionMode::TopIntoView`]: behaves like `FullyIntoView` when the
 ///   element fits in the viewport. When the element is larger, aligns the element's
 ///   leading edge with the viewport's leading edge.
+/// Whether `position_bounds` belongs to the scrollable's content.
+///
+/// The check exists to reject a position from an unrelated element tree, so it is
+/// deliberately tolerant. A scrollable's last child sits flush against the edge of
+/// the content that holds it, and the two rects are accumulated along different
+/// paths, so after enough children float rounding leaves the child a fraction
+/// larger than its own container -- observed as a content edge of 1166.6 against a
+/// last child ending at 1166.6001, roughly 20 rows in.
+///
+/// [`RectF::contains_rect`] is an exact comparison, and that fraction is the
+/// difference between following the newest row and silently never scrolling again:
+/// once the error appears it recurs for every later row, because each new one is
+/// also flush to that same edge.
+pub(crate) fn position_within_child(child_bounds: RectF, position_bounds: RectF) -> bool {
+    /// Far below anything that distinguishes a real child from a stray position,
+    /// and far above the rounding error being absorbed.
+    const TOLERANCE: f32 = 1.0;
+
+    [Axis::Horizontal, Axis::Vertical].into_iter().all(|axis| {
+        position_bounds.min_along(axis) >= child_bounds.min_along(axis) - TOLERANCE
+            && position_bounds.max_along(axis) <= child_bounds.max_along(axis) + TOLERANCE
+    })
+}
+
 pub(crate) fn scroll_delta_for_axis(
     axis: Axis,
     viewport_bounds: RectF,

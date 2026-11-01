@@ -152,3 +152,39 @@ fn test_scroll_delta_for_axis_top_into_view() {
         0.
     );
 }
+
+/// The numbers are taken from a real trace of the Session history panel, where
+/// the content's bottom edge was 1166.6 and its own last row ended at 1166.6001.
+/// An exact containment check rejected the row and the list stopped following new
+/// commands for the rest of the session.
+#[test]
+fn position_flush_with_the_content_edge_is_still_within_it() {
+    let child = RectF::from_points(vec2f(5., -56.6), vec2f(306., 1166.6));
+
+    let flush = RectF::from_points(vec2f(5., 1111.0), vec2f(306., 1166.6));
+    assert!(position_within_child(child, flush));
+
+    // A hair past the edge, which is what float accumulation produces.
+    let overshooting = RectF::from_points(vec2f(5., 1111.0001), vec2f(306., 1166.6001));
+    assert!(position_within_child(child, overshooting));
+}
+
+#[test]
+fn position_outside_the_content_is_rejected() {
+    let child = RectF::from_points(vec2f(0., 0.), vec2f(300., 1000.));
+
+    // Belonging to an unrelated element tree, which is what the check is for.
+    assert!(!position_within_child(
+        child,
+        RectF::from_points(vec2f(0., 1200.), vec2f(300., 1260.))
+    ));
+    assert!(!position_within_child(
+        child,
+        RectF::from_points(vec2f(500., 10.), vec2f(560., 70.))
+    ));
+    // Tolerance is a hair, not a licence: half a row past the edge still fails.
+    assert!(!position_within_child(
+        child,
+        RectF::from_points(vec2f(0., 980.), vec2f(300., 1030.))
+    ));
+}
