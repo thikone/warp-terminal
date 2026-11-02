@@ -386,6 +386,22 @@ New files: `script/windows/portable/install.ps1` and `uninstall.ps1` — optiona
 convenience only (Start Menu shortcut, `Unblock-File`, optional PATH entry). The
 portable folder runs without them.
 
+Upstream's CI was removed: 21 workflows, the four composite actions under
+`.github/actions`, and `workflows/release_configurations.json`. Seventeen of those
+workflows fired automatically here and nine on a cron, so they ran and failed
+whichever branch was pushed — every one is gated on
+`github.repository_owner == 'warpdotdev'`, which stops them doing work but not from
+running. "Populate Build Cache" failed during run setup rather than in a job,
+because it calls `ci.yml`, whose `params` job the owner guard skips, and later jobs
+ask for `runs-on: ${{ fromJSON(needs.params.outputs.wasm-runner) }}` — `fromJSON("")`
+throws before any job-level `if` can intervene. None of it works without upstream's
+runners, org variables and secrets. `.github/workflows/build-portable.yml` is the
+only workflow left. Issue and PR templates were kept; they generate no runs.
+
+`.github/dependabot.yml` is still upstream's: daily cargo updates assigned to
+`warpdotdev/tech-leads` through a `github-private` registry. It is limited to
+security updates, so it is left in place, but it cannot succeed as configured.
+
 ---
 
 ## Building (Windows)
@@ -399,6 +415,18 @@ is broken everywhere else.
 .\script\windows\package-release.ps1           # zips it, hashes it, writes notes
 .\script\windows\package-release.ps1 -Build    # both in one step
 ```
+
+Windows refuses to run unsigned local scripts under its default policy, so launching
+either of these directly fails with `UnauthorizedAccess` before a line of them runs:
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\script\windows\build-portable.ps1
+```
+
+`Get-ExecutionPolicy -List` shows which scope is responsible. The alternative is
+`Unblock-File .\script\windows\*.ps1`, which helps only when the files carry
+Mark-of-the-Web from a downloaded archive rather than when the policy is `Restricted`.
+This is the same obstacle the shell bootstrap works around, described in section 7.
 
 `build-portable.ps1` refuses to finish unless the linked binary reports the tag it
 was asked for and links as PE subsystem 2, which is the only direct evidence that
@@ -489,7 +517,10 @@ The binary `dlopen`s its windowing and graphics libraries rather than linking th
 window rather than as a load error. On a minimal Ubuntu install:
 
 ```bash
-sudo apt install libx11-6 libx11-xcb1 libxcb1 libxi6 libxcursor1                  libxkbcommon0 libxkbcommon-x11-0                  libwayland-client0 libwayland-egl1 libegl1                  libvulkan1 mesa-vulkan-drivers fontconfig
+sudo apt install libx11-6 libx11-xcb1 libxcb1 libxi6 libxcursor1 \
+                 libxkbcommon0 libxkbcommon-x11-0 \
+                 libwayland-client0 libwayland-egl1 libegl1 \
+                 libvulkan1 mesa-vulkan-drivers fontconfig
 ```
 
 A Vulkan driver is needed as well as the loader — a present `libvulkan1` with nothing
