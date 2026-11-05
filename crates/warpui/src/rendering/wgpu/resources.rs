@@ -588,6 +588,21 @@ fn is_v3d_vulkan_adapter(adapter_info: &wgpu::AdapterInfo) -> bool {
         && adapter_info.name.starts_with("V3D 4.2.14.")
 }
 
+/// Checks whether the provided adapter info describes VMware's SVGA3D adapter on
+/// the GL backend.
+///
+/// Its GL path renders the glyph atlas blank: blocks, selection and other solid
+/// fills draw correctly while every glyph -- all text and all icons -- is
+/// invisible. The software Vulkan adapter present in the same VM renders
+/// correctly, but reports `DeviceType::Cpu`, which the low-power preference (the
+/// default on Linux) ranks last, so without this the broken adapter wins on merit.
+///
+/// Matched on the GL backend specifically, so a future VMware Vulkan driver is not
+/// caught by it.
+fn is_vmware_svga3d_gl_adapter(adapter_info: &wgpu::AdapterInfo) -> bool {
+    adapter_info.backend == wgpu::Backend::Gl && adapter_info.name.contains("SVGA3D")
+}
+
 /// Checks whether the provided adapter info describes a lavapipe
 /// (Vulkan llvmpipe) adapter that may not work properly with warpui.
 fn is_older_lavapipe_adapter(adapter_info: &wgpu::AdapterInfo) -> bool {
@@ -775,6 +790,11 @@ fn adapter_stability_sort_func(
 
     if is_v3d_vulkan_adapter(&adapter_info) {
         log::warn!("Deprioritizing Vulkan-backed V3D adapter");
+        return AdapterSupport::Unsupported;
+    }
+
+    if is_vmware_svga3d_gl_adapter(&adapter_info) {
+        log::warn!("Deprioritizing VMware SVGA3D adapter on the GL backend");
         return AdapterSupport::Unsupported;
     }
 
