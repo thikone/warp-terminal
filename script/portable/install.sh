@@ -95,9 +95,18 @@ check_runtime_libs
 
 APPS_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
 ICON_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/256x256/apps"
-DESKTOP="$APPS_DIR/warp-oss.desktop"
+# The window identifies itself by the app ID from app/src/bin/oss.rs (Wayland
+# app_id, X11 WM_CLASS). GNOME on Wayland matches a window to the entry whose file
+# name is that ID, so both the file name and StartupWMClass must use it -- with
+# anything else the running window falls back to a generic icon.
+APP_ID="dev.warp.WarpOss"
+DESKTOP="$APPS_DIR/$APP_ID.desktop"
+# Name used by earlier versions of this script; removed so the launcher does not
+# list Warp twice.
+LEGACY_DESKTOP="$APPS_DIR/warp-oss.desktop"
 
 mkdir -p "$APPS_DIR" "$ICON_DIR"
+rm -f "$LEGACY_DESKTOP"
 
 if [ -f "$HERE/icon.png" ]; then
     install -m 644 "$HERE/icon.png" "$ICON_DIR/warp-oss.png"
@@ -116,7 +125,7 @@ Icon=warp-oss
 Terminal=false
 Categories=System;TerminalEmulator;
 Keywords=terminal;shell;console;
-StartupWMClass=warp-oss
+StartupWMClass=$APP_ID
 EOF
 chmod 644 "$DESKTOP"
 

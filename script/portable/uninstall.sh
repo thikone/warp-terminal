@@ -22,12 +22,14 @@ done
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
-DESKTOP="$DATA_HOME/applications/warp-oss.desktop"
+DESKTOP="$DATA_HOME/applications/dev.warp.WarpOss.desktop"
+# Name used by earlier versions of install.sh.
+LEGACY_DESKTOP="$DATA_HOME/applications/warp-oss.desktop"
 ICON="$DATA_HOME/icons/hicolor/256x256/apps/warp-oss.png"
 SYMLINK="$HOME/.local/bin/warp-oss"
 
 removed=0
-for f in "$DESKTOP" "$ICON"; do
+for f in "$DESKTOP" "$LEGACY_DESKTOP" "$ICON"; do
     if [ -f "$f" ]; then
         rm -f "$f"
         [ "$QUIET" -eq 0 ] && echo "removed  $f"
