@@ -102,7 +102,13 @@ jobs:
           compression-level: 0
 
   macos:
-    runs-on: macos-14
+    # Not pinned to a version, unlike the Linux job: GitHub retires macOS images
+    # fairly quickly, and a retired label fails the run outright with
+    # "The configuration '...' is not supported" rather than degrading. The
+    # artifact stays compatible regardless, because .cargo/config.toml pins
+    # MACOSX_DEPLOYMENT_TARGET, and its name follows `uname -m`, so a change of
+    # image architecture would be visible rather than silent.
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
         with:

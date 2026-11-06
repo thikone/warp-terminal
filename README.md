@@ -533,7 +533,7 @@ sits on a network or VM share, set `CARGO_TARGET_DIR` to a local path first — 
 into a share is slow, and if that share is also a Windows checkout it mixes two
 platforms' artifacts in one profile directory.
 
-`.github/workflows/build-portable.yml` runs both on `ubuntu-24.04` and `macos-14`, on
+`.github/workflows/build-portable.yml` runs both on `ubuntu-24.04` and `macos-latest`, on
 a pushed `v0.*.terminal_*` tag or on manual dispatch. Windows is not in CI: the local
 PowerShell script already does it in about twelve minutes with a warm cache.
 
